@@ -1,0 +1,11 @@
+[Unit]
+Description=AIOps Morning Meeting Briefing Service
+After=network.target
+
+[Service]
+Type=oneshot
+User=root
+WorkingDirectory=/opt/aiops-assistant
+ExecStart=/opt/aiops-assistant/run_daily.sh
+StandardOutput=journal
+StandardError=journal

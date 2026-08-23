@@ -1,0 +1,15 @@
+version: '3.8'
+
+services:
+  aiops-assistant:
+    build: .
+    container_name: aiops-meeting-assistant
+    restart: unless-stopped
+    environment:
+      - TZ=Asia/Taipei
+      - GEMINI_API_KEY=${GEMINI_API_KEY:-}
+      - CORP_LLM_KEY=${CORP_LLM_KEY:-}
+    volumes:
+      - ./config:/app/config
+      - ./data:/app/data
+      - ./output:/app/output

@@ -1,0 +1,10 @@
+[Unit]
+Description=Trigger AIOps Morning Meeting Daily (Mon-Fri 08:30)
+
+[Timer]
+# 週一到週五早上 08:30 觸發
+OnCalendar=Mon..Fri *-*-* 08:30:00
+Persistent=true
+
+[Install]
+WantedBy=timers.target
