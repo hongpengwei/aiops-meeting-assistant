@@ -27,7 +27,7 @@ class TestCsvLoader:
             end_date=datetime(2026, 8, 22)
         )
         assert len(result) == 2
-        assert list(result.columns) == ['case_id', 'created_at', 'system_name', 'plant', 'device', 'title', 'description', 'reporter']
+        assert list(result.columns) == ['case_id', 'created_at', 'system_name', 'category', 'plant', 'device', 'title', 'description', 'reporter']
     
     def test_load_missing_csv_raises(self):
         loader = CsvCaseLoader('/nonexistent/path.csv')

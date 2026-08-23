@@ -1,9 +1,9 @@
 import os
 import logging
 from datetime import datetime
-from typing import Dict, Any, List, Tuple
+from typing import Dict, Any, List, Tuple, Union
 from jinja2 import Environment, FileSystemLoader
-from src.analytics.detector import AnomalyDetectionResult
+from src.analytics.detector import AnomalyDetectionResult, MonthlyDetectionResult
 from src.notifications.teams import TeamsNotifier
 from src.notifications.email_sender import EmailNotifier
 
@@ -39,14 +39,20 @@ class ReportGenerator:
 
     def generate_and_dispatch(
         self, 
-        result: AnomalyDetectionResult, 
+        result: Union[AnomalyDetectionResult, MonthlyDetectionResult], 
         ai_analyses: Dict[str, str]
     ) -> Tuple[str, str]:
         """
         產出報告並根據設定推播
         :return: (markdown_content, html_content)
         """
-        meeting_name = "每日晨會" if result.mode == "daily" else "每週課會"
+        if result.mode == "daily":
+            meeting_name = "每日晨會"
+        elif result.mode == "weekly":
+            meeting_name = "每週課會"
+        else:
+            meeting_name = "每月課會"
+
         status_emoji = "🔴 異常警報" if result.is_anomaly_detected else "🟢 一切正常"
         title = f"【{meeting_name}系統狀況報告】{status_emoji} ({result.target_period_str})"
 
@@ -87,8 +93,15 @@ class ReportGenerator:
 
         return md_text, html_text
 
-    def _build_markdown(self, title: str, meeting_name: str, result: AnomalyDetectionResult, ai_analyses: Dict[str, str]) -> str:
-        template = self.env.get_template("report.md.j2")
+    def _build_markdown(
+        self, 
+        title: str, 
+        meeting_name: str, 
+        result: Union[AnomalyDetectionResult, MonthlyDetectionResult], 
+        ai_analyses: Dict[str, str]
+    ) -> str:
+        template_name = "monthly_report.md.j2" if result.mode == "monthly" else "report.md.j2"
+        template = self.env.get_template(template_name)
         return template.render(
             title=title,
             meeting_name=meeting_name,
@@ -96,8 +109,15 @@ class ReportGenerator:
             ai_analyses=ai_analyses
         )
 
-    def _build_html(self, title: str, meeting_name: str, result: AnomalyDetectionResult, ai_analyses: Dict[str, str]) -> str:
-        template = self.env.get_template("report.html.j2")
+    def _build_html(
+        self, 
+        title: str, 
+        meeting_name: str, 
+        result: Union[AnomalyDetectionResult, MonthlyDetectionResult], 
+        ai_analyses: Dict[str, str]
+    ) -> str:
+        template_name = "monthly_report.html.j2" if result.mode == "monthly" else "report.html.j2"
+        template = self.env.get_template(template_name)
         current_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         return template.render(
             title=title,

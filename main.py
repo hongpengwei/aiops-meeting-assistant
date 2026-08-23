@@ -26,8 +26,9 @@ def load_config(config_path: str = "./config/config.yaml") -> dict:
 def run_pipeline(mode: str = "daily", target_date_str: str = None, config_path: str = "./config/config.yaml"):
     setup_logging()
     logger.info("=" * 60)
-    logger.info("🚀 啟動 AIOps 晨會 / 課會智能監控分析系統")
-    logger.info(f"⏰ 執行模式: {mode.upper()} (晨會模式: daily | 課會模式: weekly)")
+    logger.info("🚀 啟動 AIOps 晨會 / 課會 / 月會智能監控分析系統")
+    mode_name_map = {"daily": "晨會模式 (昨日 vs 前7天)", "weekly": "課會模式 (上週 vs 過去週均)", "monthly": "月會模式 (兩層檢測: 系統級 -> 類別級)"}
+    logger.info(f"⏰ 執行模式: {mode.upper()} ({mode_name_map.get(mode, mode)})")
     logger.info("=" * 60)
 
     # 1. 載入設定
@@ -37,9 +38,10 @@ def run_pipeline(mode: str = "daily", target_date_str: str = None, config_path: 
     # 2. 建立 DataLoader 並抓取資料
     loader = create_data_loader(config)
     
-    # 決定抓取的時間區間 (向前抓取足夠的歷史資料，例如 30 天)
+    # 決定抓取的時間區間 (月報往前抓 150 天以計算歷史月平均；晨會/課會往前抓 35 天)
     end_date = datetime.now()
-    start_date = end_date - timedelta(days=35)
+    history_days = 150 if mode == "monthly" else 35
+    start_date = end_date - timedelta(days=history_days)
     
     try:
         df = loader.load_cases(start_date=start_date, end_date=end_date)
@@ -51,18 +53,21 @@ def run_pipeline(mode: str = "daily", target_date_str: str = None, config_path: 
         logger.warning(f"[2/5] ⚠️ {e}")
         logger.info("💡 正在自動為您生成測試數據 (scripts/generate_mock_data.py)...")
         from scripts.generate_mock_data import generate_mock_data
-        generate_mock_data()
+        generate_mock_data(days=120)
         df = loader.load_cases(start_date=start_date, end_date=end_date)
         logger.info(f"[2/5] 📦 成功讀取 {len(df)} 筆 Case 歷史資料")
 
     # 3. 執行統計異常檢測
     detector = AnomalyDetector(config)
-    target_date = datetime.strptime(target_date_str, "%Y-%m-%d").date() if target_date_str else None
 
     if mode == "daily":
+        target_date = datetime.strptime(target_date_str, "%Y-%m-%d").date() if target_date_str else None
         result = detector.analyze_daily(df, target_date=target_date)
-    else:
+    elif mode == "weekly":
+        target_date = datetime.strptime(target_date_str, "%Y-%m-%d").date() if target_date_str else None
         result = detector.analyze_weekly(df, target_week_end=target_date)
+    else:  # monthly
+        result = detector.analyze_monthly(df, target_month=target_date_str)
 
     logger.info(f"[3/5] 📊 統計檢測完成！")
     logger.info(f"  - 統計期間: {result.target_period_str}")
@@ -73,28 +78,63 @@ def run_pipeline(mode: str = "daily", target_date_str: str = None, config_path: 
         status_icon = "🔴" if s.is_anomaly else "🟢"
         logger.info(f"    {status_icon} {s.system_name:<15}: 當期 {s.target_count:>2} 件 (基準均值 {s.baseline_avg:>4.1f} 件) | {s.reason}")
 
-    # 4. AI 深度歸因分析 (若有異常系統才觸發)
+    # 4. AI 深度歸因分析 (若有異常才觸發)
     ai_analyses = {}
     if result.is_anomaly_detected:
-        logger.info(f"[4/5] 🤖 啟動 AI 案件文字描述深度歸因 (共 {len(result.anomalous_systems)} 個系統需分析)...")
         ai_analyzer = AIAnalyzer(config)
-        
-        for sys_metric in result.anomalous_systems:
-            sys_name = sys_metric.system_name
-            sys_cases_df = result.target_cases_df[result.target_cases_df["system_name"] == sys_name]
-            logger.info(f"  🔍 正在分析 [{sys_name}] 的 {len(sys_cases_df)} 筆提報人描述...")
-            
-            analysis_text = ai_analyzer.analyze_system_cases(
-                system_name=sys_name,
-                target_period_str=result.target_period_str,
-                cases_df=sys_cases_df
-            )
-            ai_analyses[sys_name] = analysis_text
+
+        if mode == "monthly":
+            # 月報模式：針對各暴增系統的暴增類別 (Category) 進行深度歸因
+            total_anom_cats = sum(len(cats) for cats in result.anomalous_categories.values())
+            logger.info(f"\n[4/5] 🤖 啟動月報 AI 類別文字描述深度歸因 (共 {len(result.anomalous_systems)} 個系統、{total_anom_cats} 個暴增類別需分析)...")
+
+            for sys_metric in result.anomalous_systems:
+                sys_name = sys_metric.system_name
+                anom_cats = result.anomalous_categories.get(sys_name, [])
+
+                if anom_cats:
+                    for cat_metric in anom_cats:
+                        cat_name = cat_metric.category_name
+                        cat_cases_df = result.target_cases_df[
+                            (result.target_cases_df["system_name"] == sys_name) & 
+                            (result.target_cases_df["category"] == cat_name)
+                        ]
+                        logger.info(f"  🔍 正在分析 [{sys_name}] 類別【{cat_name}】的 {len(cat_cases_df)} 筆提報人描述...")
+                        analysis_text = ai_analyzer.analyze_category_cases(
+                            system_name=sys_name,
+                            category_name=cat_name,
+                            target_period_str=result.target_period_str,
+                            cases_df=cat_cases_df
+                        )
+                        ai_analyses[f"系統 `{sys_name}` - 類別【{cat_name}】(當月 {cat_metric.target_count} 件, 月均 {cat_metric.baseline_avg:.1f} 件)"] = analysis_text
+                else:
+                    # 系統暴增但無特定暴增類別時，整體分析該系統
+                    sys_cases_df = result.target_cases_df[result.target_cases_df["system_name"] == sys_name]
+                    logger.info(f"  🔍 正在分析 [{sys_name}] 全類別的 {len(sys_cases_df)} 筆提報人描述...")
+                    analysis_text = ai_analyzer.analyze_system_cases(
+                        system_name=sys_name,
+                        target_period_str=result.target_period_str,
+                        cases_df=sys_cases_df
+                    )
+                    ai_analyses[f"系統 `{sys_name}` (全案件綜合歸因)"] = analysis_text
+        else:
+            # 晨會 / 課會模式：系統級綜合歸因
+            logger.info(f"\n[4/5] 🤖 啟動 AI 案件文字描述深度歸因 (共 {len(result.anomalous_systems)} 個系統需分析)...")
+            for sys_metric in result.anomalous_systems:
+                sys_name = sys_metric.system_name
+                sys_cases_df = result.target_cases_df[result.target_cases_df["system_name"] == sys_name]
+                logger.info(f"  🔍 正在分析 [{sys_name}] 的 {len(sys_cases_df)} 筆提報人描述...")
+                analysis_text = ai_analyzer.analyze_system_cases(
+                    system_name=sys_name,
+                    target_period_str=result.target_period_str,
+                    cases_df=sys_cases_df
+                )
+                ai_analyses[sys_name] = analysis_text
     else:
-        logger.info(f"[4/5] 🟢 無異常系統，略過 AI 分析步驟 (節省 Token 與運算成本)")
+        logger.info(f"\n[4/5] 🟢 無異常系統/類別，略過 AI 分析步驟 (節省 Token 與運算成本)")
 
     # 5. 產出報告並推播
-    logger.info(f"[5/5] 📢 產出會議簡報與推播發送...")
+    logger.info(f"\n[5/5] 📢 產出會議簡報與推播發送...")
     reporter = ReportGenerator(config)
     md_content, html_content = reporter.generate_and_dispatch(result, ai_analyses)
 
@@ -105,18 +145,18 @@ def run_pipeline(mode: str = "daily", target_date_str: str = None, config_path: 
     logger.info("=" * 60)
 
 def main():
-    parser = argparse.ArgumentParser(description="AIOps 晨會 / 課會智能監控與歸因助手")
+    parser = argparse.ArgumentParser(description="AIOps 晨會 / 課會 / 月會智能監控與歸因助手")
     parser.add_argument(
         "--mode", 
-        choices=["daily", "weekly"], 
+        choices=["daily", "weekly", "monthly"], 
         default="daily", 
-        help="執行模式: daily (每日晨會: 昨日 vs 前7天) 或 weekly (每週課會: 上週 vs 過去週平均)"
+        help="執行模式: daily (每日晨會: 昨日 vs 前7天), weekly (每週課會: 上週 vs 過去週均), monthly (每月課會: 系統級+類別級兩層檢測)"
     )
     parser.add_argument(
         "--target-date", 
         type=str, 
         default=None, 
-        help="指定分析日期 (格式: YYYY-MM-DD)，若未指定預設取昨日/最新一天"
+        help="指定分析日期/月份 (格式: YYYY-MM-DD 或 YYYY-MM)，若未指定預設取最新日/最新月"
     )
     parser.add_argument(
         "--config", 

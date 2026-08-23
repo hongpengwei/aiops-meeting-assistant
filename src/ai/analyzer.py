@@ -2,13 +2,17 @@ import os
 from typing import Dict, Any, List
 import pandas as pd
 import logging
-from src.ai.prompts import CASE_ANALYSIS_SYSTEM_PROMPT, CASE_ANALYSIS_USER_PROMPT_TEMPLATE
+from src.ai.prompts import (
+    CASE_ANALYSIS_SYSTEM_PROMPT, 
+    CASE_ANALYSIS_USER_PROMPT_TEMPLATE,
+    CATEGORY_ANALYSIS_USER_PROMPT_TEMPLATE
+)
 
 logger = logging.getLogger(__name__)
 
 class AIAnalyzer:
     """
-    AI 案件分析器：負責調用 LLM 對異常系統的 Case 描述進行語意分群與會議摘要
+    AI 案件分析器：負責調用 LLM 對異常系統/類別的 Case 描述進行語意分群與會議摘要
     """
 
     def __init__(self, config: Dict[str, Any]):
@@ -27,22 +31,7 @@ class AIAnalyzer:
             except ImportError:
                 logger.error("無法匯入 google.genai，請確認是否安裝。")
 
-    def analyze_system_cases(
-        self, 
-        system_name: str, 
-        target_period_str: str, 
-        cases_df: pd.DataFrame
-    ) -> str:
-        """
-        針對特定異常系統的案件描述進行 AI 深度歸因分析
-        """
-        if cases_df.empty:
-            return "無詳細案件資料可供分析。"
-
-        # 抽樣或選取前 N 筆最具代表性的 Case
-        sample_df = cases_df.head(self.max_cases)
-        
-        # 格式化 Case 列表為文字
+    def _format_case_lines(self, sample_df: pd.DataFrame) -> str:
         case_lines = []
         for idx, (_, row) in enumerate(sample_df.iterrows(), 1):
             plant = row.get("plant", "未知廠區")
@@ -50,12 +39,29 @@ class AIAnalyzer:
             title = row.get("title", "")
             desc = row.get("description", "")
             reporter = row.get("reporter", "匿名")
+            category = row.get("category", "")
+            cat_str = f" | 類別: {category}" if category else ""
             case_lines.append(
-                f"[{idx}] 廠區: {plant} | 設備: {device} | 提報人: {reporter}\n"
+                f"[{idx}] 廠區: {plant} | 設備: {device}{cat_str} | 提報人: {reporter}\n"
                 f"    標題: {title}\n"
                 f"    描述: {desc}"
             )
-        cases_text = "\n\n".join(case_lines)
+        return "\n\n".join(case_lines)
+
+    def analyze_system_cases(
+        self, 
+        system_name: str, 
+        target_period_str: str, 
+        cases_df: pd.DataFrame
+    ) -> str:
+        """
+        針對特定異常系統的案件描述進行 AI 深度歸因分析 (晨會 / 課會)
+        """
+        if cases_df.empty:
+            return "無詳細案件資料可供分析。"
+
+        sample_df = cases_df.head(self.max_cases)
+        cases_text = self._format_case_lines(sample_df)
 
         user_prompt = CASE_ANALYSIS_USER_PROMPT_TEMPLATE.format(
             system_name=system_name,
@@ -65,7 +71,6 @@ class AIAnalyzer:
             cases_text=cases_text
         )
 
-        # 根據 Provider 決定調用方式
         if not self.api_key or self.provider == "mock":
             logger.info(f"[AI Analyzer] ℹ️ 未檢測到 {self.api_key_env_var} 或設定為 Mock 模式，使用智慧啟發式 (Mock AI) 分析引擎...")
             return self._mock_heuristic_analysis(system_name, target_period_str, cases_df)
@@ -82,6 +87,48 @@ class AIAnalyzer:
         except Exception as e:
             logger.warning(f"[AI Analyzer] ⚠️ AI API ({self.provider}) 調用失敗 ({e})，切換至智慧啟發式分析模式。")
             return self._mock_heuristic_analysis(system_name, target_period_str, cases_df)
+
+    def analyze_category_cases(
+        self,
+        system_name: str,
+        category_name: str,
+        target_period_str: str,
+        cases_df: pd.DataFrame
+    ) -> str:
+        """
+        針對月報中暴增的特定「系統 + 類別」案件進行深度歸因分析 (月報專用)
+        """
+        if cases_df.empty:
+            return f"無【{category_name}】相關詳細案件資料可供分析。"
+
+        sample_df = cases_df.head(self.max_cases)
+        cases_text = self._format_case_lines(sample_df)
+
+        user_prompt = CATEGORY_ANALYSIS_USER_PROMPT_TEMPLATE.format(
+            system_name=system_name,
+            category_name=category_name,
+            target_period_str=target_period_str,
+            case_count=len(cases_df),
+            displayed_count=len(sample_df),
+            cases_text=cases_text
+        )
+
+        if not self.api_key or self.provider == "mock":
+            logger.info(f"[AI Analyzer] ℹ️ 未檢測到 {self.api_key_env_var} 或設定為 Mock 模式，使用智慧啟發式類別分析引擎...")
+            return self._mock_category_analysis(system_name, category_name, target_period_str, cases_df)
+
+        try:
+            if self.provider == "gemini":
+                return self._call_gemini_api(user_prompt)
+            elif self.provider in ("openai", "azure", "openai_compatible", "internal_llm"):
+                return self._call_openai_compatible_api(user_prompt)
+            elif self.provider == "custom_http":
+                return self._call_custom_http_api(user_prompt)
+            else:
+                return self._call_gemini_api(user_prompt)
+        except Exception as e:
+            logger.warning(f"[AI Analyzer] ⚠️ AI API ({self.provider}) 調用失敗 ({e})，切換至智慧啟發式類別分析模式。")
+            return self._mock_category_analysis(system_name, category_name, target_period_str, cases_df)
 
     def _call_gemini_api(self, user_prompt: str) -> str:
         """調用 Google GenAI SDK (Gemini)"""
@@ -116,7 +163,6 @@ class AIAnalyzer:
             "Content-Type": "application/json"
         }
         
-        # 支援額外的自訂 Header (如公司內部需要的 X-Client-Id 等)
         custom_headers = self.config.get("custom_headers", {})
         headers.update(custom_headers)
 
@@ -162,7 +208,6 @@ class AIAnalyzer:
                 response = requests.post(url, headers=headers, json=payload, timeout=60)
                 response.raise_for_status()
                 data = response.json()
-                # 自動嘗試解析常見的回傳欄位 (text, response, output, message)
                 return data.get("text") or data.get("response") or data.get("output") or str(data)
             except Exception as e:
                 if attempt == 2:
@@ -178,8 +223,7 @@ class AIAnalyzer:
         cases_df: pd.DataFrame
     ) -> str:
         """
-        智慧啟發式模擬分析 (供離線或無 API Key 時展示與測試)
-        透過統計廠區、機台、關鍵字分布，生成逼真的分析報表
+        智慧啟發式模擬分析 (晨會/課會模式)
         """
         total = len(cases_df)
         plant_counts = cases_df["plant"].value_counts()
@@ -190,7 +234,6 @@ class AIAnalyzer:
         top_device = device_counts.index[0] if len(device_counts) > 0 else "未知機台"
         top_device_pct = (device_counts.iloc[0] / total * 100) if len(device_counts) > 0 else 0
 
-        # 取幾筆代表性描述
         sample_descs = cases_df["description"].head(3).tolist()
         sample_quotes = "\n".join([f'  - 「{d[:60]}...」' for d in sample_descs])
 
@@ -206,6 +249,40 @@ class AIAnalyzer:
 - 根據提報人之描述，推測可能為 **【{top_plant} / {top_device}】** 於近期維護或排程任務執行期間發生通訊異常、鎖定或設定異動，導致現場人員在操作該系統時集體受阻。
 
 ### 4. 📢 會議發言重點與行動建議 (Meeting Brief & Action Items)
-1. **現況回報**：昨日 {system_name} 案件數顯著偏高（共 {total} 件），主因為 {top_plant} 的 {top_device} 出現批次連線或操作問題。
+1. **現況回報**：{target_period_str} {system_name} 案件數顯著偏高（共 {total} 件），主因為 {top_plant} 的 {top_device} 出現批次連線或操作問題。
 2. **跟進責任**：建議會後由負責 {top_plant} 設備之維運工程師協同廠端 IT 檢查 {top_device} 服務狀態。
 3. **其餘系統狀況**：其餘廠區皆為零星零散個案，整體系統核心服務運作正常。"""
+
+    def _mock_category_analysis(
+        self,
+        system_name: str,
+        category_name: str,
+        target_period_str: str,
+        cases_df: pd.DataFrame
+    ) -> str:
+        """
+        智慧啟發式模擬類別分析 (月報模式專用)
+        """
+        total = len(cases_df)
+        plant_counts = cases_df["plant"].value_counts()
+        top_plant = plant_counts.index[0] if len(plant_counts) > 0 else "未知廠區"
+        top_plant_pct = (plant_counts.iloc[0] / total * 100) if len(plant_counts) > 0 else 0
+
+        device_counts = cases_df["device"].value_counts()
+        top_device = device_counts.index[0] if len(device_counts) > 0 else "未知機台"
+        top_device_pct = (device_counts.iloc[0] / total * 100) if len(device_counts) > 0 else 0
+
+        sample_descs = cases_df["description"].head(3).tolist()
+        sample_quotes = "\n".join([f'  - 「{d[:60]}...」' for d in sample_descs])
+
+        return f"""### 1. 🔍 【{category_name}】集中問題與熱點 (Patterns within Category)
+- **影響範圍**：本月份【{category_name}】相關工單共 {total} 件，其中約 {top_plant_pct:.0f}% 集中在 **【{top_plant}】**，主要受影響設備/線別為 **【{top_device}】**（佔比約 {top_device_pct:.0f}%）。
+- **代表性回報症狀**：
+{sample_quotes}
+
+### 2. 💡 潛在根因推測 (Hypothesis & Root Cause)
+- 分析此類別描述，研判主要導因為 **【{top_plant} / {top_device}】** 在該月份的通訊交握逾時或背景佇列阻塞，造成現場人員在執行【{category_name}】相關流程時頻繁重試與報錯。
+
+### 3. 📢 月會建議行動方案 (Monthly Action Items)
+1. **短期措施**：請負責 {system_name} 的維運同仁針對 {top_plant} 的 {top_device} 進行通訊參數檢測與快取清理。
+2. **長期預防**：建立【{category_name}】專屬的預警閾值與定期健檢機制，避免跨月重複累積。"""

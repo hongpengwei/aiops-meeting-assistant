@@ -1,0 +1,49 @@
+# {{ title }}
+
+- **會議類型**：每月課會 (Monthly Meeting)
+- **統計目標**：{{ result.target_period_str }}
+- **比較基準**：{{ result.baseline_period_str }}
+- **總體狀態**：{% if result.is_anomaly_detected %}⚠️ 偵測到部分系統或類別異常暴增{% else %}✅ 所有系統與類別數量均在基準線內，運作正常{% endif %}
+
+---
+
+## 📊 第一層：各系統 Case 總量統計表
+
+| 系統名稱 | 當月數量 | 歷史月均 | 增長率 | 狀態 |
+| :--- | :---: | :---: | :---: | :--- |
+{% for s in result.systems %}
+{% set status_tag = "🔴 **異常暴增**" if s.is_anomaly else "🟢 正常" %}
+{% set growth_str = "%+.0f%%"|format(s.growth_rate) if (s.target_count > 0 or s.baseline_avg > 0) else "0%" %}
+| `{{ s.system_name }}` | {{ s.target_count }} 件 | {{ "%.1f"|format(s.baseline_avg) }} 件 | {{ growth_str }} | {{ status_tag }} |
+{% endfor %}
+
+---
+
+## 🔍 第二層：各系統類別 (Category) 深入統計表
+
+{% for sys_name, cat_list in result.system_categories.items() %}
+### 系統：`{{ sys_name }}`
+| 案件類別 | 當月數量 | 歷史月均 | 增長率 | 狀態 |
+| :--- | :---: | :---: | :---: | :--- |
+{% for c in cat_list %}
+{% set cat_status = "🔴 **暴增重點**" if c.is_anomaly else "🟢 正常" %}
+{% set cat_growth = "%+.0f%%"|format(c.growth_rate) if (c.target_count > 0 or c.baseline_avg > 0) else "0%" %}
+| {{ c.category_name }} | {{ c.target_count }} 件 | {{ "%.1f"|format(c.baseline_avg) }} 件 | {{ cat_growth }} | {{ cat_status }} |
+{% endfor %}
+
+{% endfor %}
+
+---
+
+{% if not result.is_anomaly_detected %}
+> 💡 **月會結論**：本月各系統與各項類別工單量均在正常基準範圍內，無特定機台、廠區或流程之突發群聚異常，月會可快速通過。
+{% else %}
+## 🤖 第三層：AI 深度歸因分析 (聚焦本月暴增類別)
+
+{% for key, analysis in ai_analyses.items() %}
+### {{ key }}
+{{ analysis }}
+
+---
+{% endfor %}
+{% endif %}

@@ -9,7 +9,8 @@ def sample_config():
         'data_source': {'type': 'csv', 'csv': {'file_path': './data/mock_cases.csv'}},
         'thresholds': {
             'daily': {'baseline_days': 7, 'multiplier': 1.4, 'min_spike_cases': 5},
-            'weekly': {'baseline_weeks': 4, 'multiplier': 1.3, 'min_spike_cases': 10}
+            'weekly': {'baseline_weeks': 4, 'multiplier': 1.3, 'min_spike_cases': 10},
+            'monthly': {'baseline_months': 3, 'multiplier': 1.3, 'min_spike_cases': 15, 'category_multiplier': 1.5, 'category_min_spike': 5, 'top_n_categories': 5}
         },
         'ai': {'provider': 'mock', 'model_name': 'test', 'api_key_env_var': 'TEST_KEY', 'max_cases_to_analyze': 10},
         'notifications': {'local': {'enabled': False}, 'teams': {'enabled': False}, 'email': {'enabled': False}}

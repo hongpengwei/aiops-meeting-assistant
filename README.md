@@ -1,20 +1,24 @@
 # 🤖 AIOps 會議智能監控與歸因簡報助手 (Ops Insight Assistant)
 
-專為**每日晨會**（檢視昨日 vs 前 7 天）與**每週課會**（檢視上週 vs 歷史週平均）設計的自動化監控與 AI 歸因簡報系統。
+專為**每日晨會**（昨日 vs 前 7 天）、**每週課會**（上週 vs 歷史週平均）與**每月課會**（系統級 + 類別級兩層深度檢測）設計的自動化監控與 AI 歸因簡報系統。
 
 ---
 
 ## 🌟 核心特色
 
 1. **節省會前準備時間**：開會前自動計算各系統 Case 數量波動與增長率，免去人工查表統計。
-2. **統計快篩 + AI 深度歸因**：
+2. **三種分析模式**：
+   - ☀️ **每日晨會 (`--mode daily`)**：比較昨日 vs 前 7 天均線，快速掌握昨日突發問題。
+   - 📅 **每週課會 (`--mode weekly`)**：比較上週 vs 過去 4 週週平均，掌握中短期趨勢。
+   - 📊 **每月課會 (`--mode monthly`)**：**兩層深度檢測**（第 1 層：系統總量暴增檢測 ➔ 第 2 層：深入比對該系統哪些具體 Category/類別暴增），AI 只聚焦暴增類別的描述進行精準歸因！
+3. **統計快篩 + AI 深度歸因**：
    - 🟢 **數量正常**：自動推播「全系統正常，無突發異常」，不耗費任何 AI Token。
-   - 🔴 **數量暴增**：自動打包提報人的**自然語言描述與狀況回報**交由 AI 分析，判斷是「特定機台/廠區集中異常」還是「零星分散個案」，並直接整理出 3 點會議發言重點。
-3. **無痛切換資料來源 (Data Adapter Pattern)**：
+   - 🔴 **數量暴增**：自動打包提報人的**自然語言描述與狀況回報**交由 AI 分析，判斷是「特定機台/廠區集中異常」還是「零星分散個案」，並直接整理出 3 點會議發言重點與行動方案。
+4. **無痛切換資料來源 (Data Adapter Pattern)**：
    - 現階段：使用手動匯出或產生的 CSV / Excel 檔案。
    - 未來：只需在 `config.yaml` 改設定，即可直連公司 SQL 資料庫或 Jira / ServiceNow API，**核心程式碼一行都不用改**。
-4. **支援多種 AI 連線模式**：支援 Google Gemini、OpenAI、Azure、企業私有 LLM Gateway、本地 Ollama / vLLM 或自訂 HTTP 端點，並具備離線自動 Fallback 防護。
-5. **多管道推播**：支援本機 HTML/Markdown 報表、Microsoft Teams 頻道通知與 Email 發信。
+5. **支援多種 AI 連線模式**：支援 Google Gemini、OpenAI、Azure、企業私有 LLM Gateway、本地 Ollama / vLLM 或自訂 HTTP 端點，並具備離線自動 Fallback 防護。
+6. **多管道推播**：支援本機 HTML/Markdown 報表、Microsoft Teams 頻道通知與 Email 發信。
 
 ---
 
@@ -25,7 +29,7 @@
 ├── config/
 │   └── config.yaml             # 系統核心設定 (資料來源、閾值、AI 模型、推播)
 ├── data/
-│   └── mock_cases.csv          # 測試用的歷史 Case 數據 (包含真實中文狀況描述)
+│   └── mock_cases.csv          # 測試用的歷史 Case 數據 (包含真實中文狀況描述與 category)
 ├── output/                     # 自動生成的 Markdown 與 HTML 視覺化簡報
 ├── src/
 │   ├── __init__.py
@@ -39,36 +43,40 @@
 │   │   └── factory.py          # Loader 工廠模式
 │   ├── analytics/
 │   │   ├── __init__.py
-│   │   └── detector.py         # 統計異常檢測引擎 (每日 7 天均線 / 每週歷史週平均)
+│   │   └── detector.py         # 統計異常檢測引擎 (日/週/月兩層檢測)
 │   ├── ai/
 │   │   ├── __init__.py
 │   │   ├── analyzer.py         # AI 描述分析與語意分群 (Gemini / OpenAI / Custom API)
-│   │   └── prompts.py          # 結構化 Prompt 樣板
+│   │   └── prompts.py          # 結構化 Prompt 樣板 (含系統級與類別級)
 │   └── notifications/
 │       ├── __init__.py
 │       ├── reporter.py         # 報告產生器 (Jinja2 模板渲染 Markdown / HTML)
 │       ├── teams.py            # Microsoft Teams Webhook 推播
 │       └── email_sender.py     # Email (SMTP) 發信模組
 ├── templates/
-│   ├── report.md.j2            # Markdown 報告 Jinja2 模板
-│   └── report.html.j2          # HTML 報告 Jinja2 模板
-├── tests/                      # 單元測試
+│   ├── report.md.j2            # 晨會/課會 Markdown 報告模板
+│   ├── report.html.j2          # 晨會/課會 HTML 報告模板
+│   ├── monthly_report.md.j2    # 每月課會 Markdown 兩層分析模板
+│   └── monthly_report.html.j2  # 每月課會 HTML 兩層分析模板
+├── tests/                      # 單元測試 (pytest)
 │   ├── conftest.py             # 共用 pytest fixtures
-│   ├── test_detector.py        # 異常檢測邏輯測試
+│   ├── test_detector.py        # 日/週異常檢測測試
+│   ├── test_monthly_detector.py # 每月兩層異常檢測測試
 │   ├── test_csv_loader.py      # CSV 載入與篩選測試
-│   └── test_analyzer.py        # AI 分析器 Mock 模式測試
+│   └── test_analyzer.py        # AI 分析器測試
 ├── deploy/
 │   └── systemd/                # Linux Systemd Service 與 Timer 定時排程檔
 │       ├── aiops-daily.service
 │       └── aiops-daily.timer
 ├── scripts/
 │   ├── __init__.py
-│   ├── generate_mock_data.py   # 生成逼真測試數據的腳本
+│   ├── generate_mock_data.py   # 生成逼真測試數據的腳本 (含跨月與多類別)
 │   └── setup_windows_scheduler.ps1 # Windows 工作排程器一鍵註冊腳本
-├── main.py                     # 主程式入口 (支援 --mode daily / --mode weekly)
+├── main.py                     # 主程式入口 (支援 --mode daily / --mode weekly / --mode monthly)
 ├── scheduler.py                # Python 定時排程守護服務 (跨平台/伺服器)
 ├── run_daily.bat / .sh         # 每日晨會啟動腳本 (Windows / Linux)
 ├── run_weekly.bat / .sh        # 每週課會啟動腳本 (Windows / Linux)
+├── run_monthly.bat / .sh       # 每月課會啟動腳本 (Windows / Linux)
 ├── Dockerfile                  # Docker 映像檔建置設定
 ├── docker-compose.yml          # Docker Compose 一鍵部署設定
 ├── requirements.txt            # Python 套件依賴
@@ -98,8 +106,10 @@
    ```powershell
    python scripts/generate_mock_data.py
    ```
-3. **執行每日晨會分析**：
-   雙擊執行 [`run_daily.bat`](file:///c:/Users/hongp/OneDrive/桌面/0823/run_daily.bat)
+3. **執行會議分析**：
+   - 每日晨會：雙擊執行 [`run_daily.bat`](file:///c:/Users/hongp/OneDrive/桌面/0823/run_daily.bat)
+   - 每週課會：雙擊執行 [`run_weekly.bat`](file:///c:/Users/hongp/OneDrive/桌面/0823/run_weekly.bat)
+   - 每月課會：雙擊執行 [`run_monthly.bat`](file:///c:/Users/hongp/OneDrive/桌面/0823/run_monthly.bat)（或 `python main.py --mode monthly`）
 
 ---
 
@@ -114,10 +124,10 @@
    source .venv/bin/activate
    python3 scripts/generate_mock_data.py
    ```
-3. **執行每日晨會分析**：
-   ```bash
-   ./run_daily.sh
-   ```
+3. **執行會議分析**：
+   - 每日晨會：`./run_daily.sh`
+   - 每週課會：`./run_weekly.sh`
+   - 每月課會：`./run_monthly.sh`
 
 ---
 
@@ -125,34 +135,14 @@
 
 系統**完全不限制**公司資料庫的原始結構，也不需要修改現有資料表。我們在系統內部定義了標準欄位，透過 SQL 的 `AS` 別名即可輕鬆對接：
 
-### 📊 各系統 Case 數量統計表
-
-| 系統名稱 | 目標期數量 | 基準平均 | 增長率 | 狀態 |
-| :--- | :---: | :---: | :---: | :--- |
-| `ees` | 1 件 | 2.4 件 | -59% | 🟢 正常 |
-| `fdc` | 1 件 | 2.6 件 | -61% | 🟢 正常 |
-| `others` | 4 件 | 2.6 件 | +56% | 🟢 正常 |
-| `tcs/tap` | 24 件 | 2.7 件 | +784% | 🔴 **異常暴增** |
-
----
-## 🤖 AI 深度歸因分析與會議發言重點
-
-### 系統：`tcs/tap`
-
-### 1. 🔍 主要集中問題與熱點 (Top Patterns / Clusters)
-- **熱點廠區與機台**：案件高度集中於 **【Fab 12A】**（佔比約 88%），主要受影響設備為 **【Track-03】**（佔比約 83%）。
-- **共通回報症狀**：多位提報人反映類似現象：
-  - 「Track-03 派工作業異常中斷，畫面上顯示 Remote Host Closed Connection...」
-  - 「Fab 12A Track-03 刷批次條碼後跳出 SECS/GEM 通訊逾時 (ERR_TIMEOUT_0x8004)...」
-  - 「Fab 12A Track-03 機台生產完畢後無法回傳結果至 TCS/TAP，已卡站 20 分鐘...」
-
 ### 📋 欄位需求清單
 
 | 欄位層級 | 標準欄位名稱 | 說明 | 若資料庫沒有此欄位？ |
 | :--- | :--- | :--- | :--- |
-| 🔴 **必要** | `created_at` | 案件建立時間 | **必備**（用來統計昨日、前 7 天或上週） |
+| 🔴 **必要** | `created_at` | 案件建立時間 | **必備**（用來統計昨日、前 7 天、上週或歷史月份） |
 | 🔴 **必要** | `system_name` | 所屬系統名稱 (如 MES, WMS) | **必備**（用來區分各系統案件量） |
 | 🔴 **必要** | `description` | 提報人描述的狀況與文字 | **必備**（供 AI 閱讀歸因；若只有 `title` 亦可） |
+| 🟡 **加分** | `category` | 案件分類/類別 (如 設備通訊、派工異常) | 若無，系統自動補「未分類」，**月報模式將自動改為全系統綜合歸因** |
 | 🟡 **加分** | `plant` / `fab` | 廠區或地點 (如 Fab 12, Fab 14) | 若無，系統自動補「未知廠區」，**不影響執行** |
 | 🟡 **加分** | `device` / `tool` | 機台或設備編號 (如 Track-03) | 若無，系統自動補「General」，**不影響執行** |
 | 🟢 **選填** | `case_id` | 工單編號 / 單號 | 若無，系統自動生成流水號 |
@@ -160,7 +150,7 @@
 
 ### 💡 SQL 對接範例 (`config/config.yaml`)
 
-假設公司資料表的欄位名稱完全不同（如 `TKT_ID`, `LOG_TIME`, `APP_NAME`, `ISSUE_MEMO`, `SITE`），只需在 SQL 查詢中使用 `AS`：
+假設公司資料表的欄位名稱完全不同（如 `TKT_ID`, `LOG_TIME`, `APP_NAME`, `CAT_NAME`, `ISSUE_MEMO`, `SITE`），只需在 SQL 查詢中使用 `AS`：
 
 ```yaml
 data_source:
@@ -172,6 +162,7 @@ data_source:
         TKT_ID       AS case_id,       -- 單號
         LOG_TIME     AS created_at,    -- 建立時間
         APP_NAME     AS system_name,   -- 系統名稱
+        CAT_NAME     AS category,      -- 案件類別 (月報兩層分析依據)
         ISSUE_MEMO   AS description,   -- 提報人描述
         SITE         AS plant          -- 廠區
       FROM COMPANY_TICKETS_TABLE

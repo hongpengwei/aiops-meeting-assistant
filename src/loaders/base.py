@@ -8,6 +8,7 @@ REQUIRED_COLUMNS = [
     "case_id",       # 案件唯一識別碼
     "created_at",    # 建立時間 (datetime)
     "system_name",   # 所屬系統名稱 (如 MES, WMS, ERP)
+    "category",      # 案件類別 (如 設備通訊、派工異常、權限申請等)
     "plant",         # 廠區 / 地點 (如 Fab12, Fab14, HQ)
     "device",        # 機台 / 設備編號 (如 Track-01, Svr-02，若無可填未知)
     "title",         # 簡短標題
@@ -54,6 +55,7 @@ class BaseCaseLoader(ABC):
         df["created_at"] = pd.to_datetime(df["created_at"])
         
         # 填充缺失值
+        df["category"] = df["category"].replace("N/A", "未分類").fillna("未分類")
         df["plant"] = df["plant"].fillna("未知廠區")
         df["device"] = df["device"].fillna("未知機台/通用")
         df["title"] = df["title"].fillna("無標題")

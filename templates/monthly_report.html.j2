@@ -1,0 +1,120 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <title>{{ title }}</title>
+    <style>
+        body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif; background-color: #f1f3f4; margin: 0; padding: 20px; color: #202124; }
+        .container { max-width: 960px; margin: 0 auto; background: #ffffff; padding: 30px; border-radius: 8px; box-shadow: 0 1px 3px rgba(0,0,0,0.12); }
+        .header { border-bottom: 1px solid #dadce0; padding-bottom: 15px; margin-bottom: 25px; }
+        table { width: 100%; border-collapse: collapse; margin-bottom: 25px; }
+        th { background-color: #f8f9fa; border-bottom: 2px solid #dadce0; padding: 10px; text-align: center; color: #5f6368; font-size: 14px; }
+        th:first-child { text-align: left; }
+        td { padding: 9px 10px; font-size: 14px; }
+        .badge-danger { background-color: #d93025; color: white; padding: 3px 7px; border-radius: 4px; font-size: 12px; font-weight: bold; }
+        .badge-success { background-color: #1e8e3e; color: white; padding: 3px 7px; border-radius: 4px; font-size: 12px; font-weight: bold; }
+        .card { background-color: #f8f9fa; border-left: 4px solid #1a73e8; padding: 18px; margin-bottom: 20px; border-radius: 4px; }
+        .card-danger { border-left-color: #d93025; background-color: #fdf7f7; }
+        .section-title { color: #1a73e8; border-bottom: 2px solid #1a73e8; padding-bottom: 6px; margin-top: 30px; font-size: 18px; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1 style="margin: 0 0 10px 0; font-size: 24px;">{{ title }}</h1>
+            <div style="font-size: 14px; color: #5f6368; line-height: 1.6;">
+                <span>📅 <b>會議類型</b>：{{ meeting_name }}</span> | 
+                <span>🎯 <b>統計目標</b>：{{ result.target_period_str }}</span> | 
+                <span>📈 <b>基準期間</b>：{{ result.baseline_period_str }}</span>
+            </div>
+        </div>
+
+        <h2 class="section-title">📊 第一層：各系統 Case 總量統計表</h2>
+        <table>
+            <thead>
+                <tr>
+                    <th>系統名稱</th>
+                    <th>當月數量</th>
+                    <th>歷史月均</th>
+                    <th>增長率</th>
+                    <th>狀態</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for s in result.systems %}
+                {% set bg_color = "#fce8e6" if s.is_anomaly else "#ffffff" %}
+                <tr style="background-color: {{ bg_color }}; border-bottom: 1px solid #e0e0e0;">
+                    <td style="font-weight: bold;">{{ s.system_name }}</td>
+                    <td style="text-align: center;">{{ s.target_count }} 件</td>
+                    <td style="text-align: center;">{{ "%.1f"|format(s.baseline_avg) }} 件</td>
+                    <td style="text-align: center;">{{ "%+.0f%%"|format(s.growth_rate) if (s.target_count > 0 or s.baseline_avg > 0) else "0%" }}</td>
+                    <td style="text-align: center;">
+                        {% if s.is_anomaly %}
+                        <span class="badge-danger">🔴 異常暴增</span>
+                        {% else %}
+                        <span class="badge-success">🟢 正常</span>
+                        {% endif %}
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+
+        <h2 class="section-title">🔍 第二層：各系統類別 (Category) 深入統計表</h2>
+        {% for sys_name, cat_list in result.system_categories.items() %}
+        <div style="margin-bottom: 20px;">
+            <h3 style="margin-bottom: 8px; color: #3c4043; font-size: 16px;">💻 系統：<b>{{ sys_name }}</b></h3>
+            <table>
+                <thead>
+                    <tr>
+                        <th>案件類別</th>
+                        <th>當月數量</th>
+                        <th>歷史月均</th>
+                        <th>增長率</th>
+                        <th>狀態</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for c in cat_list %}
+                    {% set cat_bg = "#fff2f0" if c.is_anomaly else "#ffffff" %}
+                    <tr style="background-color: {{ cat_bg }}; border-bottom: 1px solid #eee;">
+                        <td style="padding-left: 15px;">{{ c.category_name }}</td>
+                        <td style="text-align: center;">{{ c.target_count }} 件</td>
+                        <td style="text-align: center;">{{ "%.1f"|format(c.baseline_avg) }} 件</td>
+                        <td style="text-align: center;">{{ "%+.0f%%"|format(c.growth_rate) if (c.target_count > 0 or c.baseline_avg > 0) else "0%" }}</td>
+                        <td style="text-align: center;">
+                            {% if c.is_anomaly %}
+                            <b style="color: #d93025;">🔴 暴增重點</b>
+                            {% else %}
+                            <span style="color: #1e8e3e;">🟢 正常</span>
+                            {% endif %}
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+        {% endfor %}
+
+        <h2 class="section-title">🤖 第三層：AI 深度歸因分析 (聚焦本月暴增類別)</h2>
+        {% if result.is_anomaly_detected %}
+            {% for key, analysis in ai_analyses.items() %}
+            <div class="card card-danger">
+                <h3 style="margin-top: 0; color: #d93025; font-size: 16px;">📌 {{ key }}</h3>
+                <div style="line-height: 1.7; color: #3c4043; font-size: 14px;">
+                    {{ analysis | replace('\n', '<br>') }}
+                </div>
+            </div>
+            {% endfor %}
+        {% else %}
+            <div style="background-color: #e6f4ea; border-left: 4px solid #1e8e3e; padding: 15px; border-radius: 4px; color: #137333;">
+                <b>💡 月會結論：</b> 本月各系統與各項類別工單量均在正常範圍內，無需特別關注事項，會議可快速通過。
+            </div>
+        {% endif %}
+
+        <div style="margin-top: 30px; padding-top: 15px; border-top: 1px solid #dadce0; font-size: 12px; color: #80868b; text-align: right;">
+            由 Ops Insight Assistant 自動生成 • {{ current_time }}
+        </div>
+    </div>
+</body>
+</html>
