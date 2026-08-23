@@ -3,6 +3,9 @@ import smtplib
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 from typing import List, Dict, Any
+import logging
+
+logger = logging.getLogger(__name__)
 
 class EmailNotifier:
     """
@@ -25,7 +28,7 @@ class EmailNotifier:
 
     def send_report(self, subject: str, html_content: str, text_content: str = "") -> bool:
         if not self.enabled or not self.recipients:
-            print("[Email Notifier] ℹ️ Email 發信未啟用或未設定收件人，略過發信。")
+            logger.info("[Email Notifier] ℹ️ Email 發信未啟用或未設定收件人，略過發信。")
             return False
 
         msg = MIMEMultipart("alternative")
@@ -45,8 +48,8 @@ class EmailNotifier:
                 if self.username and self.password:
                     server.login(self.username, self.password)
                 server.sendmail(self.sender, self.recipients, msg.as_string())
-            print(f"[Email Notifier] ✅ 郵件發送成功至: {', '.join(self.recipients)}")
+            logger.info(f"[Email Notifier] ✅ 郵件發送成功至: {', '.join(self.recipients)}")
             return True
         except Exception as e:
-            print(f"[Email Notifier] ❌ 郵件發送失敗: {e}")
+            logger.error(f"[Email Notifier] ❌ 郵件發送失敗: {e}")
             return False

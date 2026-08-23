@@ -1,0 +1,29 @@
+# {{ title }}
+
+- **會議類型**：{{ meeting_name }}
+- **統計目標**：{{ result.target_period_str }}
+- **比較基準**：{{ result.baseline_period_str }}
+- **總體狀態**：{% if result.is_anomaly_detected %}⚠️ 偵測到異常數量暴增{% else %}✅ 所有系統數量均在基準線內，運作正常{% endif %}
+
+## 📊 各系統 Case 數量統計表
+
+| 系統名稱 | 目標期數量 | 基準平均 | 增長率 | 狀態 |
+| :--- | :---: | :---: | :---: | :--- |
+{%- for s in result.systems %}
+{%- set status_tag = '🔴 **異常暴增**' if s.is_anomaly else '🟢 正常' %}
+{%- set growth_str = ("%+.0f%%"|format(s.growth_rate)) if s.target_count > 0 or s.baseline_avg > 0 else "0%" %}
+| `{{ s.system_name }}` | {{ s.target_count }} 件 | {{ "%.1f"|format(s.baseline_avg) }} 件 | {{ growth_str }} | {{ status_tag }} |
+{%- endfor %}
+{% if not result.is_anomaly_detected %}
+> 💡 **會前結論**：昨日/當週各系統工單量平穩，無特定機台或廠區之突發異常，會議可直接快速通過。
+{%- else %}
+---
+## 🤖 AI 深度歸因分析與會議發言重點
+{% for sys_name, analysis in ai_analyses.items() %}
+### 系統：`{{ sys_name }}`
+
+{{ analysis }}
+
+---
+{%- endfor %}
+{%- endif %}

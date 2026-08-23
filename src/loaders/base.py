@@ -43,6 +43,8 @@ class BaseCaseLoader(ABC):
         if df.empty:
             return pd.DataFrame(columns=REQUIRED_COLUMNS)
 
+        df = df.copy()
+
         # 確保必要欄位存在，若來源缺少則補預設值
         for col in REQUIRED_COLUMNS:
             if col not in df.columns:

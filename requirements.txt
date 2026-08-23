@@ -1,5 +1,17 @@
+# Core Dependencies
 pandas>=2.0.0
 pyyaml>=6.0
 jinja2>=3.1.0
 requests>=2.31.0
-pydantic>=2.0.0
+pytest>=7.0.0
+
+# AI Providers (依實際使用的 LLM 服務選裝)
+# Google Gemini (官方 SDK)
+# pip install google-genai
+# 或舊版: pip install google-generativeai
+
+# Database Support (連線公司資料庫時安裝)
+# pip install sqlalchemy pyodbc
+
+# Excel Support (需要讀取 .xlsx 時安裝)
+# pip install openpyxl

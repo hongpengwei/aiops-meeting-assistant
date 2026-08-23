@@ -3,13 +3,18 @@ import sys
 import random
 from datetime import datetime, timedelta
 import pandas as pd
+import logging
+
+from src.utils import fix_windows_encoding
 
 # 解決 Windows console cp950 編碼問題
-if sys.stdout.encoding != 'utf-8':
-    sys.stdout.reconfigure(encoding='utf-8')
+fix_windows_encoding()
+
+logger = logging.getLogger(__name__)
 
 def generate_mock_data(output_path: str = "./data/mock_cases.csv", days: int = 14):
     os.makedirs(os.path.dirname(output_path), exist_ok=True)
+    random.seed(42)
     
     # 基準日期 (以今天為基準，往前推 14 天)
     base_date = datetime.now().date()
@@ -69,7 +74,7 @@ def generate_mock_data(output_path: str = "./data/mock_cases.csv", days: int = 1
     rows = []
     case_counter = 1000
 
-    print(f"🔄 開始生成過去 {days} 天的模擬 Case 數據 (系統: {', '.join(systems)})...")
+    logger.info(f"🔄 開始生成過去 {days} 天的模擬 Case 數據 (系統: {', '.join(systems)})...")
 
     for day_offset in range(days + 1):
         current_date = start_date + timedelta(days=day_offset)
@@ -119,7 +124,7 @@ def generate_mock_data(output_path: str = "./data/mock_cases.csv", days: int = 1
 
     df = pd.DataFrame(rows)
     df.to_csv(output_path, index=False, encoding="utf-8-sig")
-    print(f"✅ 成功生成 {len(df)} 筆測試資料，已儲存至: {os.path.abspath(output_path)}")
+    logger.info(f"✅ 成功生成 {len(df)} 筆測試資料，已儲存至: {os.path.abspath(output_path)}")
     return df
 
 if __name__ == "__main__":

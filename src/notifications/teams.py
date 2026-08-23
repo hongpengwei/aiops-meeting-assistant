@@ -1,5 +1,8 @@
 import requests
 from typing import Optional
+import logging
+
+logger = logging.getLogger(__name__)
 
 class TeamsNotifier:
     """
@@ -12,7 +15,7 @@ class TeamsNotifier:
 
     def send_message(self, title: str, text_markdown: str, is_anomaly: bool = False) -> bool:
         if not self.enabled or not self.webhook_url:
-            print("[Teams Notifier] ℹ️ Teams 推播未啟用或未設定 webhook_url，略過發送。")
+            logger.info("[Teams Notifier] ℹ️ Teams 推播未啟用或未設定 webhook_url，略過發送。")
             return False
 
         # 根據狀態決定卡片頂部顏色條 (綠色正常 / 紅色異常)
@@ -36,11 +39,11 @@ class TeamsNotifier:
         try:
             response = requests.post(self.webhook_url, json=payload, timeout=15)
             if response.status_code == 200:
-                print("[Teams Notifier] ✅ Teams 訊息發送成功！")
+                logger.info("[Teams Notifier] ✅ Teams 訊息發送成功！")
                 return True
             else:
-                print(f"[Teams Notifier] ⚠️ Teams 發送失敗: HTTP {response.status_code} - {response.text}")
+                logger.warning(f"[Teams Notifier] ⚠️ Teams 發送失敗: HTTP {response.status_code} - {response.text}")
                 return False
         except Exception as e:
-            print(f"[Teams Notifier] ❌ Teams 發送錯誤: {e}")
+            logger.error(f"[Teams Notifier] ❌ Teams 發送錯誤: {e}")
             return False

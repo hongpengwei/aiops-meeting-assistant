@@ -28,26 +28,41 @@
 │   └── mock_cases.csv          # 測試用的歷史 Case 數據 (包含真實中文狀況描述)
 ├── output/                     # 自動生成的 Markdown 與 HTML 視覺化簡報
 ├── src/
+│   ├── __init__.py
+│   ├── utils.py                # 共用工具模組 (logging 設定、Windows 編碼修復)
 │   ├── loaders/                # 資料讀取抽象層 (轉接器模式)
+│   │   ├── __init__.py
 │   │   ├── base.py             # 抽象資料介面 (BaseCaseLoader 與欄位標準化)
 │   │   ├── csv_loader.py       # CSV / Excel 讀取器 (現階段)
 │   │   ├── db_loader.py        # 資料庫讀取器範本 (未來對接 SQL)
 │   │   ├── api_loader.py       # API 讀取器範本 (未來對接 Jira/ServiceNow)
 │   │   └── factory.py          # Loader 工廠模式
 │   ├── analytics/
+│   │   ├── __init__.py
 │   │   └── detector.py         # 統計異常檢測引擎 (每日 7 天均線 / 每週歷史週平均)
 │   ├── ai/
+│   │   ├── __init__.py
 │   │   ├── analyzer.py         # AI 描述分析與語意分群 (Gemini / OpenAI / Custom API)
 │   │   └── prompts.py          # 結構化 Prompt 樣板
 │   └── notifications/
-│       ├── reporter.py         # 報告產生器 (Markdown / HTML)
+│       ├── __init__.py
+│       ├── reporter.py         # 報告產生器 (Jinja2 模板渲染 Markdown / HTML)
 │       ├── teams.py            # Microsoft Teams Webhook 推播
 │       └── email_sender.py     # Email (SMTP) 發信模組
+├── templates/
+│   ├── report.md.j2            # Markdown 報告 Jinja2 模板
+│   └── report.html.j2          # HTML 報告 Jinja2 模板
+├── tests/                      # 單元測試
+│   ├── conftest.py             # 共用 pytest fixtures
+│   ├── test_detector.py        # 異常檢測邏輯測試
+│   ├── test_csv_loader.py      # CSV 載入與篩選測試
+│   └── test_analyzer.py        # AI 分析器 Mock 模式測試
 ├── deploy/
 │   └── systemd/                # Linux Systemd Service 與 Timer 定時排程檔
 │       ├── aiops-daily.service
 │       └── aiops-daily.timer
 ├── scripts/
+│   ├── __init__.py
 │   ├── generate_mock_data.py   # 生成逼真測試數據的腳本
 │   └── setup_windows_scheduler.ps1 # Windows 工作排程器一鍵註冊腳本
 ├── main.py                     # 主程式入口 (支援 --mode daily / --mode weekly)
@@ -57,6 +72,7 @@
 ├── Dockerfile                  # Docker 映像檔建置設定
 ├── docker-compose.yml          # Docker Compose 一鍵部署設定
 ├── requirements.txt            # Python 套件依賴
+├── pytest.ini                  # 測試設定
 └── README.md                   # 說明文件
 ```
 

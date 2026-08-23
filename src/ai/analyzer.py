@@ -1,7 +1,10 @@
 import os
 from typing import Dict, Any, List
 import pandas as pd
+import logging
 from src.ai.prompts import CASE_ANALYSIS_SYSTEM_PROMPT, CASE_ANALYSIS_USER_PROMPT_TEMPLATE
+
+logger = logging.getLogger(__name__)
 
 class AIAnalyzer:
     """
@@ -15,6 +18,14 @@ class AIAnalyzer:
         self.api_key_env_var = self.config.get("api_key_env_var", "GEMINI_API_KEY")
         self.max_cases = self.config.get("max_cases_to_analyze", 50)
         self.api_key = os.getenv(self.api_key_env_var, "").strip()
+
+        self._gemini_client = None
+        if self.provider == "gemini" and self.api_key:
+            try:
+                from google import genai
+                self._gemini_client = genai.Client(api_key=self.api_key)
+            except ImportError:
+                logger.error("無法匯入 google.genai，請確認是否安裝。")
 
     def analyze_system_cases(
         self, 
@@ -56,7 +67,7 @@ class AIAnalyzer:
 
         # 根據 Provider 決定調用方式
         if not self.api_key or self.provider == "mock":
-            print(f"[AI Analyzer] ℹ️ 未檢測到 {self.api_key_env_var} 或設定為 Mock 模式，使用智慧啟發式 (Mock AI) 分析引擎...")
+            logger.info(f"[AI Analyzer] ℹ️ 未檢測到 {self.api_key_env_var} 或設定為 Mock 模式，使用智慧啟發式 (Mock AI) 分析引擎...")
             return self._mock_heuristic_analysis(system_name, target_period_str, cases_df)
 
         try:
@@ -69,28 +80,28 @@ class AIAnalyzer:
             else:
                 return self._call_gemini_api(user_prompt)
         except Exception as e:
-            print(f"[AI Analyzer] ⚠️ AI API ({self.provider}) 調用失敗 ({e})，切換至智慧啟發式分析模式。")
+            logger.warning(f"[AI Analyzer] ⚠️ AI API ({self.provider}) 調用失敗 ({e})，切換至智慧啟發式分析模式。")
             return self._mock_heuristic_analysis(system_name, target_period_str, cases_df)
 
     def _call_gemini_api(self, user_prompt: str) -> str:
         """調用 Google GenAI SDK (Gemini)"""
-        try:
-            from google import genai
-            client = genai.Client(api_key=self.api_key)
-            response = client.models.generate_content(
-                model=self.model_name,
-                contents=f"{CASE_ANALYSIS_SYSTEM_PROMPT}\n\n{user_prompt}"
-            )
-            return response.text
-        except ImportError:
-            import google.generativeai as genai_legacy
-            genai_legacy.configure(api_key=self.api_key)
-            model = genai_legacy.GenerativeModel(
-                model_name=self.model_name,
-                system_instruction=CASE_ANALYSIS_SYSTEM_PROMPT
-            )
-            resp = model.generate_content(user_prompt)
-            return resp.text
+        if not self._gemini_client:
+            raise RuntimeError("Gemini Client 未初始化或缺少 google.genai 模組。")
+            
+        import time
+        for attempt in range(3):
+            try:
+                response = self._gemini_client.models.generate_content(
+                    model=self.model_name,
+                    contents=f"{CASE_ANALYSIS_SYSTEM_PROMPT}\n\n{user_prompt}"
+                )
+                return response.text
+            except Exception as e:
+                if attempt == 2:
+                    raise
+                wait = 2 ** (attempt + 1)
+                logger.warning(f'API 調用失敗，{wait} 秒後重試 (attempt {attempt+1}/3): {e}')
+                time.sleep(wait)
 
     def _call_openai_compatible_api(self, user_prompt: str) -> str:
         """
@@ -118,10 +129,19 @@ class AIAnalyzer:
             "temperature": 0.2
         }
 
-        response = requests.post(url, headers=headers, json=payload, timeout=60)
-        response.raise_for_status()
-        data = response.json()
-        return data["choices"][0]["message"]["content"]
+        import time
+        for attempt in range(3):
+            try:
+                response = requests.post(url, headers=headers, json=payload, timeout=60)
+                response.raise_for_status()
+                data = response.json()
+                return data["choices"][0]["message"]["content"]
+            except Exception as e:
+                if attempt == 2:
+                    raise
+                wait = 2 ** (attempt + 1)
+                logger.warning(f'API 調用失敗，{wait} 秒後重試 (attempt {attempt+1}/3): {e}')
+                time.sleep(wait)
 
     def _call_custom_http_api(self, user_prompt: str) -> str:
         """調用公司完全自訂格式的 HTTP REST API"""
@@ -136,11 +156,20 @@ class AIAnalyzer:
             "model": self.model_name
         }
 
-        response = requests.post(url, headers=headers, json=payload, timeout=60)
-        response.raise_for_status()
-        data = response.json()
-        # 自動嘗試解析常見的回傳欄位 (text, response, output, message)
-        return data.get("text") or data.get("response") or data.get("output") or str(data)
+        import time
+        for attempt in range(3):
+            try:
+                response = requests.post(url, headers=headers, json=payload, timeout=60)
+                response.raise_for_status()
+                data = response.json()
+                # 自動嘗試解析常見的回傳欄位 (text, response, output, message)
+                return data.get("text") or data.get("response") or data.get("output") or str(data)
+            except Exception as e:
+                if attempt == 2:
+                    raise
+                wait = 2 ** (attempt + 1)
+                logger.warning(f'API 調用失敗，{wait} 秒後重試 (attempt {attempt+1}/3): {e}')
+                time.sleep(wait)
 
     def _mock_heuristic_analysis(
         self, 
