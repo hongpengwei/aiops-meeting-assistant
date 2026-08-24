@@ -224,73 +224,57 @@ class AIAnalyzer:
         cases_df: pd.DataFrame
     ) -> str:
         """
-        智慧啟發式模擬分析 (晨會/課會模式) — 掃讀友善格式
+        智慧啟發式模擬分析 (晨會/課會模式) — 現象分群歸納格式
         """
         total = len(cases_df)
         sample_df = cases_df.head(self.max_cases)
 
-        # --- 建構 Case 快速索引表 ---
+        # 統計熱點
         plant_counts = cases_df["plant"].value_counts()
         top_plant = plant_counts.index[0] if len(plant_counts) > 0 else "未知廠區"
-        top_plant_pct = (plant_counts.iloc[0] / total * 100) if len(plant_counts) > 0 else 0
+        top_plant_count = plant_counts.iloc[0] if len(plant_counts) > 0 else 0
+        top_plant_pct = (top_plant_count / total * 100) if total > 0 else 0
 
         device_counts = cases_df["device"].value_counts()
         top_device = device_counts.index[0] if len(device_counts) > 0 else "未知機台"
 
-        # 判斷嚴重度的簡單啟發式
-        table_rows = []
-        critical_ids = []
-        minor_ids = []
+        # 分群識別
+        critical_keywords = ["中斷", "停線", "當機", "無法", "失敗", "crash", "down", "error", "逾時", "timeout", "卡站", "緊急"]
+        cluster_a_cases = []
+        routine_cases = []
+
         for idx, (_, row) in enumerate(sample_df.iterrows(), 1):
-            desc = str(row.get("description", "")).lower()
-            plant = row.get("plant", "未知廠區")
-            device = row.get("device", "未知機台")
-            title = str(row.get("title", ""))[:30]
+            desc = str(row.get("description", ""))
+            title = str(row.get("title", ""))
+            combined = (title + " " + desc).lower()
 
-            # 嚴重度判斷：關鍵字啟發式
-            critical_keywords = ["中斷", "停線", "當機", "無法", "失敗", "crash", "down", "error", "逾時", "timeout"]
-            minor_keywords = ["密碼", "權限", "帳號", "申請", "password", "reset", "忘記"]
-
-            if any(kw in desc or kw in title.lower() for kw in critical_keywords):
-                severity = "🔴"
-                critical_ids.append(str(idx))
-            elif any(kw in desc or kw in title.lower() for kw in minor_keywords):
-                severity = "🟢"
-                minor_ids.append(str(idx))
+            if any(kw in combined for kw in critical_keywords):
+                cluster_a_cases.append(f"#{idx}")
             else:
-                severity = "🟡"
+                routine_cases.append(f"#{idx}")
 
-            table_rows.append(f"| {idx} | {severity} | {plant} | {device} | {title} |")
+        cluster_a_str = ", ".join(cluster_a_cases[:5]) if cluster_a_cases else "無明顯群聚"
+        if len(cluster_a_cases) > 5:
+            cluster_a_str += f" 等共 {len(cluster_a_cases)} 筆"
 
-        case_table = "\n".join(table_rows)
+        routine_count = max(0, total - len(cluster_a_cases))
+        routine_sample = ", ".join(routine_cases[:3]) if routine_cases else "無"
 
-        # --- 分群摘要 ---
-        cluster_a_ids = ", ".join([f"#{i}" for i in critical_ids]) if critical_ids else "無"
-        minor_case_ids = ", ".join([f"#{i}" for i in minor_ids]) if minor_ids else "無"
+        return f"""### 1. 🔍 案件現象分群與熱點分析 (Pattern Breakdown)
 
-        return f"""### 1. 📋 Case 快速索引表 (Quick Index)
+- **🔥 群組 A：{top_plant} / {top_device} 批次操作異常與通訊受阻**
+  - **分佈範圍**：高度集中於 **【{top_plant} / {top_device}】**（佔比約 {top_plant_pct:.0f}%，共 {top_plant_count} 件）
+  - **主要現象**：現場人員集中反映機台通訊逾時、狀態鎖定或派工受阻
+  - **涉及案件**：Case {cluster_a_str}
+  - **推測根因**：{top_plant} 之 {top_device} 近期維護或通訊交握異常，導致背景服務佇列阻塞
 
-| # | 嚴重度 | 廠區 | 設備 | 一句話摘要 |
-|---|--------|------|------|-----------|
-{case_table}
+- **🟢 常態/零星個案**（共 {routine_count} 件，如 Case {routine_sample}）：
+  - 屬於個別廠區之日常例行維運（如密碼重設、一般權限開通與單一操作諮詢），經評估無群聚性系統風險，維持日常維運 SOP 處理。
 
-（🔴 嚴重/需立即處理、🟡 注意/需追蹤、🟢 輕微/可略過）
+### 2. 📢 會議發言重點與行動建議 (Action Items)
 
-### 2. 🔍 問題分群摘要 (Cluster Summary)
-
-**群組 A：{top_plant} / {top_device} 批次異常**（涉及 Case {cluster_a_ids}，佔比約 {top_plant_pct:.0f}%）
-- 影響範圍：{top_plant} 廠區，主要設備 {top_device}
-- 共通症狀：多位提報人反映該設備出現通訊異常或操作中斷
-- 推測根因：近期維護或排程任務執行期間發生通訊異動
-
-**🟢 零星個案**（Case {minor_case_ids}，可略過）
-- 日常雜訊（密碼重設、權限申請等），無需會議追蹤。
-
-### 3. 📢 會議發言重點 (Meeting Brief)
-
-1. 【現況】{target_period_str} {system_name} 案件數顯著偏高（共 {total} 件），主因集中在 {top_plant} 的 {top_device}。
-2. 【行動】建議會後由負責 {top_plant} 的維運工程師檢查 {top_device} 服務狀態與通訊參數。
-3. 【其餘】其餘廠區為零星個案，系統核心服務運作正常，無需額外跟進。"""
+1. 【現況回報】{target_period_str} {system_name} 案件數顯著偏高（共 {total} 件），主因集中於 {top_plant} 的 {top_device}。
+2. 【建議處置】會後由負責 {top_plant} 的維運工程師協同廠端 IT 檢查 {top_device} 連線品質與通訊參數。"""
 
     def _mock_category_analysis(
         self,
@@ -300,64 +284,56 @@ class AIAnalyzer:
         cases_df: pd.DataFrame
     ) -> str:
         """
-        智慧啟發式模擬類別分析 (月報模式專用) — 掃讀友善格式
+        智慧啟發式模擬類別分析 (月報模式專用) — 現象分群歸納格式
         """
         total = len(cases_df)
         sample_df = cases_df.head(self.max_cases)
 
         plant_counts = cases_df["plant"].value_counts()
         top_plant = plant_counts.index[0] if len(plant_counts) > 0 else "未知廠區"
-        top_plant_pct = (plant_counts.iloc[0] / total * 100) if len(plant_counts) > 0 else 0
+        top_plant_count = plant_counts.iloc[0] if len(plant_counts) > 0 else 0
+        top_plant_pct = (top_plant_count / total * 100) if total > 0 else 0
 
         device_counts = cases_df["device"].value_counts()
         top_device = device_counts.index[0] if len(device_counts) > 0 else "未知機台"
 
-        # 建構 Case 快速索引表
-        table_rows = []
-        critical_ids = []
-        minor_ids = []
+        # 分群識別
+        critical_keywords = ["中斷", "停線", "當機", "無法", "失敗", "crash", "down", "error", "逾時", "timeout", "卡站", "緊急"]
+        cluster_a_cases = []
+        routine_cases = []
+
         for idx, (_, row) in enumerate(sample_df.iterrows(), 1):
-            desc = str(row.get("description", "")).lower()
-            plant = row.get("plant", "未知廠區")
-            device = row.get("device", "未知機台")
-            title = str(row.get("title", ""))[:30]
+            desc = str(row.get("description", ""))
+            title = str(row.get("title", ""))
+            combined = (title + " " + desc).lower()
 
-            critical_keywords = ["中斷", "停線", "當機", "無法", "失敗", "crash", "down", "error", "逾時", "timeout"]
-            minor_keywords = ["密碼", "權限", "帳號", "申請", "password", "reset", "忘記"]
-
-            if any(kw in desc or kw in title.lower() for kw in critical_keywords):
-                severity = "🔴"
-                critical_ids.append(str(idx))
-            elif any(kw in desc or kw in title.lower() for kw in minor_keywords):
-                severity = "🟢"
-                minor_ids.append(str(idx))
+            if any(kw in combined for kw in critical_keywords):
+                cluster_a_cases.append(f"#{idx}")
             else:
-                severity = "🟡"
+                routine_cases.append(f"#{idx}")
 
-            table_rows.append(f"| {idx} | {severity} | {plant} | {device} | {title} |")
+        cluster_a_str = ", ".join(cluster_a_cases[:5]) if cluster_a_cases else "無明顯群聚"
+        if len(cluster_a_cases) > 5:
+            cluster_a_str += f" 等共 {len(cluster_a_cases)} 筆"
 
-        case_table = "\n".join(table_rows)
-        cluster_a_ids = ", ".join([f"#{i}" for i in critical_ids]) if critical_ids else "無"
-        minor_case_ids = ", ".join([f"#{i}" for i in minor_ids]) if minor_ids else "無"
+        routine_count = max(0, total - len(cluster_a_cases))
+        routine_sample = ", ".join(routine_cases[:3]) if routine_cases else "無"
 
-        return f"""### 1. 📋 Case 快速索引表 (Quick Index)
+        return f"""### 1. 🔍 【{category_name}】問題現象分群 (Pattern Breakdown)
 
-| # | 嚴重度 | 廠區 | 設備 | 一句話摘要 |
-|---|--------|------|------|-----------|
-{case_table}
+- **🔥 主要集中問題：{top_plant} / {top_device} 之【{category_name}】頻發異常**
+  - **熱點分佈**：主要集中於 **【{top_plant} / {top_device}】**（佔比約 {top_plant_pct:.0f}%，共 {top_plant_count} 件）
+  - **現象描述**：執行【{category_name}】流程時頻繁出現交握逾時、佇列積壓或操作卡站
+  - **涉及案件**：Case {cluster_a_str} （可供調閱現場描述）
+  - **可能導因**：{top_plant} 該設備於本月份發生通訊參數設定異動或背景服務資源飽和
 
-（🔴 嚴重/需立即處理、🟡 注意/需追蹤、🟢 輕微/可略過）
+- **🟢 分散/常態個案**（共 {routine_count} 件，如 Case {routine_sample}）：
+  - 屬於分散於其他廠區之獨立單一事件，無明顯群聚或跨機台擴散趨勢，維持例行維運監控。
 
-### 2. 🔍 問題分群與根因推測 (Cluster & Root Cause)
+### 2. 📢 月會改善行動方案 (Action Items)
 
-**群組 A：{top_plant} / {top_device} 之【{category_name}】集中異常**（涉及 Case {cluster_a_ids}，佔比約 {top_plant_pct:.0f}%）
-- 共通症狀：現場人員執行【{category_name}】相關流程時頻繁出現通訊交握逾時或佇列阻塞
-- 推測根因：{top_plant} 的 {top_device} 於該月份發生通訊參數異動或背景服務資源不足
+1. 【短期措施】請負責 {system_name} 的維運同仁針對 {top_plant} 的 {top_device} 進行通訊參數校驗與快取清理。
+2. 【長期預防】建立【{category_name}】專屬的預警閾值與定期健檢機制，避免跨月重複累積。"""
 
-**🟢 零星個案**（Case {minor_case_ids}，可略過）
 
-### 3. 📢 月會建議行動方案 (Monthly Action Items)
-
-1. 【短期】請負責 {system_name} 的維運同仁針對 {top_plant} 的 {top_device} 進行通訊參數檢測與快取清理。
-2. 【長期】建立【{category_name}】專屬的預警閾值與定期健檢機制，避免跨月重複累積。"""
 
