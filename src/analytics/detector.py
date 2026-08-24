@@ -3,6 +3,8 @@ from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from typing import List, Dict, Any, Optional
 import pandas as pd
+from src.utils import subtract_months
+
 
 logger = logging.getLogger(__name__)
 
@@ -169,7 +171,7 @@ class AnomalyDetector:
 
     def analyze_daily(self, df: pd.DataFrame, target_date: Optional[datetime.date] = None) -> AnomalyDetectionResult:
         """
-        每日晨會分析：昨日 vs 前 7 天
+        每日晨會分析：昨日 (或指定日) vs 前 7 天
         """
         if df.empty:
             return AnomalyDetectionResult(
@@ -282,6 +284,8 @@ class AnomalyDetector:
         else:
             # 支援傳入 YYYY-MM 或 YYYY-MM-DD
             target_month = str(target_month)[:7]
+
+
 
         baseline_months_count = self.monthly_cfg.get("baseline_months", 3)
         sys_multiplier = self.monthly_cfg.get("multiplier", 1.3)

@@ -24,8 +24,17 @@ class CsvCaseLoader(BaseCaseLoader):
         df = self.validate_and_clean(df)
 
         # 根據時間區間過濾 (相容 date 與 datetime)
-        start_ts = pd.to_datetime(start_date)
-        end_ts = pd.to_datetime(end_date)
+        from datetime import date as dt_date
+        if isinstance(start_date, dt_date) and not isinstance(start_date, datetime):
+            start_ts = pd.to_datetime(datetime.combine(start_date, datetime.min.time()))
+        else:
+            start_ts = pd.to_datetime(start_date)
+
+        if isinstance(end_date, dt_date) and not isinstance(end_date, datetime):
+            end_ts = pd.to_datetime(datetime.combine(end_date, datetime.max.time().replace(microsecond=0)))
+        else:
+            end_ts = pd.to_datetime(end_date)
 
         filtered_df = df[(df["created_at"] >= start_ts) & (df["created_at"] <= end_ts)].copy()
         return filtered_df
+

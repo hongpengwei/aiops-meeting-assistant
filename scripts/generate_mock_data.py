@@ -83,15 +83,19 @@ def generate_mock_data(output_path: str = "./data/mock_cases.csv", days: int = 1
     rows = []
     case_counter = 1000
 
+    from src.utils import subtract_months
+
     logger.info(f"🔄 開始生成過去 {days} 天的模擬 Case 數據 (系統: {', '.join(systems)})...")
 
-    # 判斷目標月份 (近 30 天為當月/最近一個分析月)
-    current_month_str = base_date.strftime("%Y-%m")
+    # 判斷目標月份 (以上個完整月作為月報分析異常注入目標)
+    last_m_year, last_m_month = subtract_months(base_date.year, base_date.month, 1)
+    target_month_str = f"{last_m_year:04d}-{last_m_month:02d}"
+    yesterday = base_date - timedelta(days=1)
 
     for day_offset in range(days + 1):
         current_date = start_date + timedelta(days=day_offset)
-        is_yesterday = (day_offset == days - 1) # 設定昨天為晨會異常日
-        is_target_month = (current_date.strftime("%Y-%m") == current_month_str)
+        is_yesterday = (current_date == yesterday) # 設定昨天為晨會異常日
+        is_target_month = (current_date.strftime("%Y-%m") == target_month_str)
 
         for sys_name in systems:
             # 正常情況下每個系統每天 1 ~ 3 筆 Case
@@ -101,8 +105,9 @@ def generate_mock_data(output_path: str = "./data/mock_cases.csv", days: int = 1
             if is_yesterday and sys_name == "tcs/tap":
                 case_count = 24
             elif is_target_month and sys_name == "tcs/tap":
-                # 在當前月份中，tcs/tap 稍微活躍 (每天 3~6 筆)，製造「月報級異常」
+                # 在目標月份中，tcs/tap 活躍 (每天 3~6 筆)，製造「月報級異常」
                 case_count = random.randint(3, 6)
+
             
             for _ in range(case_count):
                 case_counter += 1

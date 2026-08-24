@@ -6,7 +6,13 @@ import yaml
 import pandas as pd
 import logging
 
-from src.utils import setup_logging, fix_windows_encoding
+from src.utils import (
+    setup_logging,
+    fix_windows_encoding,
+    get_yesterday_range,
+    get_weekly_range,
+    get_last_full_month_range
+)
 
 # 解決 Windows console cp950 編碼問題
 fix_windows_encoding()
@@ -27,7 +33,7 @@ def run_pipeline(mode: str = "daily", target_date_str: str = None, config_path: 
     setup_logging()
     logger.info("=" * 60)
     logger.info("🚀 啟動 AIOps 晨會 / 課會 / 月會智能監控分析系統")
-    mode_name_map = {"daily": "晨會模式 (昨日 vs 前7天)", "weekly": "課會模式 (上週 vs 過去週均)", "monthly": "月會模式 (兩層檢測: 系統級 -> 類別級)"}
+    mode_name_map = {"daily": "晨會模式 (昨日全天 vs 前7天)", "weekly": "課會模式 (上週完整週 vs 過去週均)", "monthly": "月會模式 (上月全月: 系統級 -> 類別級兩層檢測)"}
     logger.info(f"⏰ 執行模式: {mode.upper()} ({mode_name_map.get(mode, mode)})")
     logger.info("=" * 60)
 
@@ -35,13 +41,21 @@ def run_pipeline(mode: str = "daily", target_date_str: str = None, config_path: 
     config = load_config(config_path)
     logger.info(f"[1/5] ⚙️ 設定檔載入成功 (資料來源模式: {config.get('data_source', {}).get('type')})")
 
-    # 2. 建立 DataLoader 並抓取資料
+    # 2. 根據模式計算精確的日曆完整週期邊界 (避免滑動時間誤差)
+    if mode == "daily":
+        start_date, end_date, target_date = get_yesterday_range(target_date_str, history_days=35)
+        period_desc = f"目標昨日: {target_date}"
+    elif mode == "weekly":
+        start_date, end_date, target_date = get_weekly_range(target_date_str, history_weeks=8)
+        period_desc = f"目標週結束日: {target_date}"
+    else:  # monthly
+        start_date, end_date, target_month_str_calc = get_last_full_month_range(target_date_str, history_months=6)
+        period_desc = f"目標月份: {target_month_str_calc}"
+
+    logger.info(f"📅 統計區間鎖定: {period_desc} (資料載入範圍: {start_date.strftime('%Y-%m-%d %H:%M:%S')} ~ {end_date.strftime('%Y-%m-%d %H:%M:%S')})")
+
+    # 建立 DataLoader 並抓取資料
     loader = create_data_loader(config)
-    
-    # 決定抓取的時間區間 (月報往前抓 150 天以計算歷史月平均；晨會/課會往前抓 35 天)
-    end_date = datetime.now()
-    history_days = 150 if mode == "monthly" else 35
-    start_date = end_date - timedelta(days=history_days)
     
     try:
         df = loader.load_cases(start_date=start_date, end_date=end_date)
@@ -53,7 +67,7 @@ def run_pipeline(mode: str = "daily", target_date_str: str = None, config_path: 
         logger.warning(f"[2/5] ⚠️ {e}")
         logger.info("💡 正在自動為您生成測試數據 (scripts/generate_mock_data.py)...")
         from scripts.generate_mock_data import generate_mock_data
-        generate_mock_data(days=120)
+        generate_mock_data(days=180)
         df = loader.load_cases(start_date=start_date, end_date=end_date)
         logger.info(f"[2/5] 📦 成功讀取 {len(df)} 筆 Case 歷史資料")
 
@@ -61,13 +75,12 @@ def run_pipeline(mode: str = "daily", target_date_str: str = None, config_path: 
     detector = AnomalyDetector(config)
 
     if mode == "daily":
-        target_date = datetime.strptime(target_date_str, "%Y-%m-%d").date() if target_date_str else None
         result = detector.analyze_daily(df, target_date=target_date)
     elif mode == "weekly":
-        target_date = datetime.strptime(target_date_str, "%Y-%m-%d").date() if target_date_str else None
         result = detector.analyze_weekly(df, target_week_end=target_date)
     else:  # monthly
-        result = detector.analyze_monthly(df, target_month=target_date_str)
+        result = detector.analyze_monthly(df, target_month=target_month_str_calc)
+
 
     logger.info(f"[3/5] 📊 統計檢測完成！")
     logger.info(f"  - 統計期間: {result.target_period_str}")
