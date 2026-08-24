@@ -4,10 +4,11 @@ from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 from typing import List, Dict, Any
 import logging
+from src.notifications.base import BaseNotifier
 
 logger = logging.getLogger(__name__)
 
-class EmailNotifier:
+class EmailNotifier(BaseNotifier):
     """
     Email (SMTP) 發信模組
     """
@@ -53,3 +54,8 @@ class EmailNotifier:
         except Exception as e:
             logger.error(f"[Email Notifier] ❌ 郵件發送失敗: {e}")
             return False
+
+    def send(self, subject: str, content: str, is_anomaly: bool = False) -> bool:
+        """BaseNotifier 統一介面實作"""
+        return self.send_report(subject=subject, html_content=content, text_content=content)
+

@@ -38,8 +38,8 @@
 │   │   ├── __init__.py
 │   │   ├── base.py             # 抽象資料介面 (BaseCaseLoader 與欄位標準化)
 │   │   ├── csv_loader.py       # CSV / Excel 讀取器 (現階段)
-│   │   ├── db_loader.py        # 資料庫讀取器範本 (未來對接 SQL)
-│   │   ├── api_loader.py       # API 讀取器範本 (未來對接 Jira/ServiceNow)
+│   │   ├── db_loader.py        # 資料庫讀取器 (支援環境變數讀取連線字串)
+│   │   ├── api_loader.py       # API 讀取器 (內建 retry 機制與 timeout 300s)
 │   │   └── factory.py          # Loader 工廠模式
 │   ├── analytics/
 │   │   ├── __init__.py
@@ -47,10 +47,11 @@
 │   ├── ai/
 │   │   ├── __init__.py
 │   │   ├── analyzer.py         # AI 描述分析與語意分群 (Gemini / OpenAI / Custom API)
-│   │   └── prompts.py          # 結構化 Prompt 樣板 (含系統級與類別級)
+│   │   └── prompts.py          # 結構化 Prompt 樣板 (掃讀友善格式：嚴重度表格 + 分群摘要)
 │   └── notifications/
 │       ├── __init__.py
-│       ├── reporter.py         # 報告產生器 (Jinja2 模板渲染 Markdown / HTML)
+│       ├── base.py             # 通知發送器抽象介面 (BaseNotifier)
+│       ├── reporter.py         # 報告渲染器 + 推播協調器 (ReportRenderer + ReportGenerator)
 │       ├── teams.py            # Microsoft Teams Webhook 推播
 │       └── email_sender.py     # Email (SMTP) 發信模組
 ├── templates/
@@ -77,9 +78,10 @@
 ├── run_daily.bat / .sh         # 每日晨會啟動腳本 (Windows / Linux)
 ├── run_weekly.bat / .sh        # 每週課會啟動腳本 (Windows / Linux)
 ├── run_monthly.bat / .sh       # 每月課會啟動腳本 (Windows / Linux)
-├── Dockerfile                  # Docker 映像檔建置設定
+├── Dockerfile                  # Docker 映像檔建置設定 (支援可選依賴安裝)
 ├── docker-compose.yml          # Docker Compose 一鍵部署設定
-├── requirements.txt            # Python 套件依賴
+├── requirements.txt            # Python 核心套件依賴
+├── requirements-extras.txt     # 可選套件依賴 (AI / DB / Excel)
 ├── pytest.ini                  # 測試設定
 └── README.md                   # 說明文件
 ```
@@ -131,6 +133,42 @@
 
 ---
 
+## ⚡ 使用者接入指南 — 只需兩步
+
+> 💡 **不需要改任何一行程式碼！** 不管是接 AI、接資料庫還是接 API，使用者只需要做兩件事：
+
+| 步驟 | 做什麼 | 在哪裡做 |
+|:---:|------|------|
+| **①** | 修改 `config/config.yaml` | 切換 `data_source.type` 或 `ai.provider`，填入對應設定 |
+| **②** | 設定環境變數 | 設定 API Key / DB 連線字串等敏感資訊 |
+
+### 快速範例
+
+**接 AI（Gemini）**：
+```powershell
+# 步驟 1: config.yaml 已經預設好 Gemini，不需要改
+# 步驟 2: 設定環境變數
+$env:GEMINI_API_KEY = "AIzaSy..."
+```
+
+**接公司資料庫**：
+```powershell
+# 步驟 1: 修改 config.yaml → data_source.type 改為 "database"，調整 SQL query
+# 步驟 2: 設定環境變數
+$env:DB_CONNECTION_STRING = "mssql+pyodbc://user:password@server/dbname?driver=ODBC+Driver+17+for+SQL+Server"
+```
+
+**接公司 API（Jira / ServiceNow）**：
+```powershell
+# 步驟 1: 修改 config.yaml → data_source.type 改為 "api"，填入 base_url 和 endpoint
+# 步驟 2: 設定環境變數
+$env:CORP_API_TOKEN = "your_api_token"
+```
+
+> ⚠️ **安全提醒**：所有密碼與 API Key 均透過環境變數讀取，**切勿直接寫在 `config.yaml` 中**。
+
+---
+
 ## 🗄️ 資料庫欄位限制與對應說明 (Database Schema)
 
 系統**完全不限制**公司資料庫的原始結構，也不需要修改現有資料表。我們在系統內部定義了標準欄位，透過 SQL 的 `AS` 別名即可輕鬆對接：
@@ -156,7 +194,8 @@
 data_source:
   type: "database"
   database:
-    connection_string: "mssql+pyodbc://user:password@server/dbname?driver=ODBC+Driver+17+for+SQL+Server"
+    # 連線字串從環境變數讀取 (不要把密碼寫在這裡！)
+    connection_string_env_var: "DB_CONNECTION_STRING"
     query_template: |
       SELECT 
         TKT_ID       AS case_id,       -- 單號
@@ -167,6 +206,15 @@ data_source:
         SITE         AS plant          -- 廠區
       FROM COMPANY_TICKETS_TABLE
       WHERE LOG_TIME >= :start_date AND LOG_TIME <= :end_date
+```
+
+然後設定環境變數：
+```powershell
+# Windows
+$env:DB_CONNECTION_STRING = "mssql+pyodbc://user:password@server/dbname?driver=ODBC+Driver+17+for+SQL+Server"
+
+# Linux
+export DB_CONNECTION_STRING="mssql+pyodbc://user:password@server/dbname?driver=ODBC+Driver+17+for+SQL+Server"
 ```
 
 ---
@@ -331,9 +379,15 @@ python scheduler.py
 #### 方案 C：使用 Docker / Docker Compose 容器化部署
 若伺服器支援 Docker，可直接一鍵容器化在背景運行：
 ```bash
-# 啟動容器
+# 基本啟動 (僅包含核心依賴)
 docker compose up -d
+
+# 若需要使用 AI (Gemini) 或資料庫功能，需安裝可選依賴：
+docker build --build-arg INSTALL_EXTRAS=true -t aiops-assistant .
+docker run -d --name aiops -e GEMINI_API_KEY="your_key" aiops-assistant
 
 # 查看容器運行日誌
 docker compose logs -f
 ```
+
+> 💡 `requirements-extras.txt` 包含 `google-genai`、`sqlalchemy`、`pyodbc`、`openpyxl`，使用 `--build-arg INSTALL_EXTRAS=true` 時才會安裝。

@@ -1,6 +1,7 @@
 import os
 from typing import Dict, Any, List
 import pandas as pd
+import requests
 import logging
 from src.ai.prompts import (
     CASE_ANALYSIS_SYSTEM_PROMPT, 
@@ -84,7 +85,7 @@ class AIAnalyzer:
                 return self._call_custom_http_api(user_prompt)
             else:
                 return self._call_gemini_api(user_prompt)
-        except Exception as e:
+        except (requests.exceptions.RequestException, TimeoutError, ConnectionError, RuntimeError) as e:
             logger.warning(f"[AI Analyzer] ⚠️ AI API ({self.provider}) 調用失敗 ({e})，切換至智慧啟發式分析模式。")
             return self._mock_heuristic_analysis(system_name, target_period_str, cases_df)
 
@@ -126,7 +127,7 @@ class AIAnalyzer:
                 return self._call_custom_http_api(user_prompt)
             else:
                 return self._call_gemini_api(user_prompt)
-        except Exception as e:
+        except (requests.exceptions.RequestException, TimeoutError, ConnectionError, RuntimeError) as e:
             logger.warning(f"[AI Analyzer] ⚠️ AI API ({self.provider}) 調用失敗 ({e})，切換至智慧啟發式類別分析模式。")
             return self._mock_category_analysis(system_name, category_name, target_period_str, cases_df)
 
@@ -223,35 +224,73 @@ class AIAnalyzer:
         cases_df: pd.DataFrame
     ) -> str:
         """
-        智慧啟發式模擬分析 (晨會/課會模式)
+        智慧啟發式模擬分析 (晨會/課會模式) — 掃讀友善格式
         """
         total = len(cases_df)
+        sample_df = cases_df.head(self.max_cases)
+
+        # --- 建構 Case 快速索引表 ---
         plant_counts = cases_df["plant"].value_counts()
         top_plant = plant_counts.index[0] if len(plant_counts) > 0 else "未知廠區"
         top_plant_pct = (plant_counts.iloc[0] / total * 100) if len(plant_counts) > 0 else 0
 
         device_counts = cases_df["device"].value_counts()
         top_device = device_counts.index[0] if len(device_counts) > 0 else "未知機台"
-        top_device_pct = (device_counts.iloc[0] / total * 100) if len(device_counts) > 0 else 0
 
-        sample_descs = cases_df["description"].head(3).tolist()
-        sample_quotes = "\n".join([f'  - 「{d[:60]}...」' for d in sample_descs])
+        # 判斷嚴重度的簡單啟發式
+        table_rows = []
+        critical_ids = []
+        minor_ids = []
+        for idx, (_, row) in enumerate(sample_df.iterrows(), 1):
+            desc = str(row.get("description", "")).lower()
+            plant = row.get("plant", "未知廠區")
+            device = row.get("device", "未知機台")
+            title = str(row.get("title", ""))[:30]
 
-        return f"""### 1. 🔍 主要集中問題與熱點 (Top Patterns / Clusters)
-- **熱點廠區與機台**：案件高度集中於 **【{top_plant}】**（佔比約 {top_plant_pct:.0f}%），主要受影響設備為 **【{top_device}】**（佔比約 {top_device_pct:.0f}%）。
-- **共通回報症狀**：多位提報人反映類似現象：
-{sample_quotes}
+            # 嚴重度判斷：關鍵字啟發式
+            critical_keywords = ["中斷", "停線", "當機", "無法", "失敗", "crash", "down", "error", "逾時", "timeout"]
+            minor_keywords = ["密碼", "權限", "帳號", "申請", "password", "reset", "忘記"]
 
-### 2. 🧩 零星/分散個案 (Scattered & Minor Issues)
-- 經比對，其餘約 {max(0, 100 - top_plant_pct):.0f}% 的案件分散於其他廠區，包含例行性密碼變更、一般權限申請與網路短暫延遲，屬於常態性個案，無須於本次會議額外跟進。
+            if any(kw in desc or kw in title.lower() for kw in critical_keywords):
+                severity = "🔴"
+                critical_ids.append(str(idx))
+            elif any(kw in desc or kw in title.lower() for kw in minor_keywords):
+                severity = "🟢"
+                minor_ids.append(str(idx))
+            else:
+                severity = "🟡"
 
-### 3. 💡 潛在根因推測 (Hypothesis & Root Cause)
-- 根據提報人之描述，推測可能為 **【{top_plant} / {top_device}】** 於近期維護或排程任務執行期間發生通訊異常、鎖定或設定異動，導致現場人員在操作該系統時集體受阻。
+            table_rows.append(f"| {idx} | {severity} | {plant} | {device} | {title} |")
 
-### 4. 📢 會議發言重點與行動建議 (Meeting Brief & Action Items)
-1. **現況回報**：{target_period_str} {system_name} 案件數顯著偏高（共 {total} 件），主因為 {top_plant} 的 {top_device} 出現批次連線或操作問題。
-2. **跟進責任**：建議會後由負責 {top_plant} 設備之維運工程師協同廠端 IT 檢查 {top_device} 服務狀態。
-3. **其餘系統狀況**：其餘廠區皆為零星零散個案，整體系統核心服務運作正常。"""
+        case_table = "\n".join(table_rows)
+
+        # --- 分群摘要 ---
+        cluster_a_ids = ", ".join([f"#{i}" for i in critical_ids]) if critical_ids else "無"
+        minor_case_ids = ", ".join([f"#{i}" for i in minor_ids]) if minor_ids else "無"
+
+        return f"""### 1. 📋 Case 快速索引表 (Quick Index)
+
+| # | 嚴重度 | 廠區 | 設備 | 一句話摘要 |
+|---|--------|------|------|-----------|
+{case_table}
+
+（🔴 嚴重/需立即處理、🟡 注意/需追蹤、🟢 輕微/可略過）
+
+### 2. 🔍 問題分群摘要 (Cluster Summary)
+
+**群組 A：{top_plant} / {top_device} 批次異常**（涉及 Case {cluster_a_ids}，佔比約 {top_plant_pct:.0f}%）
+- 影響範圍：{top_plant} 廠區，主要設備 {top_device}
+- 共通症狀：多位提報人反映該設備出現通訊異常或操作中斷
+- 推測根因：近期維護或排程任務執行期間發生通訊異動
+
+**🟢 零星個案**（Case {minor_case_ids}，可略過）
+- 日常雜訊（密碼重設、權限申請等），無需會議追蹤。
+
+### 3. 📢 會議發言重點 (Meeting Brief)
+
+1. 【現況】{target_period_str} {system_name} 案件數顯著偏高（共 {total} 件），主因集中在 {top_plant} 的 {top_device}。
+2. 【行動】建議會後由負責 {top_plant} 的維運工程師檢查 {top_device} 服務狀態與通訊參數。
+3. 【其餘】其餘廠區為零星個案，系統核心服務運作正常，無需額外跟進。"""
 
     def _mock_category_analysis(
         self,
@@ -261,28 +300,64 @@ class AIAnalyzer:
         cases_df: pd.DataFrame
     ) -> str:
         """
-        智慧啟發式模擬類別分析 (月報模式專用)
+        智慧啟發式模擬類別分析 (月報模式專用) — 掃讀友善格式
         """
         total = len(cases_df)
+        sample_df = cases_df.head(self.max_cases)
+
         plant_counts = cases_df["plant"].value_counts()
         top_plant = plant_counts.index[0] if len(plant_counts) > 0 else "未知廠區"
         top_plant_pct = (plant_counts.iloc[0] / total * 100) if len(plant_counts) > 0 else 0
 
         device_counts = cases_df["device"].value_counts()
         top_device = device_counts.index[0] if len(device_counts) > 0 else "未知機台"
-        top_device_pct = (device_counts.iloc[0] / total * 100) if len(device_counts) > 0 else 0
 
-        sample_descs = cases_df["description"].head(3).tolist()
-        sample_quotes = "\n".join([f'  - 「{d[:60]}...」' for d in sample_descs])
+        # 建構 Case 快速索引表
+        table_rows = []
+        critical_ids = []
+        minor_ids = []
+        for idx, (_, row) in enumerate(sample_df.iterrows(), 1):
+            desc = str(row.get("description", "")).lower()
+            plant = row.get("plant", "未知廠區")
+            device = row.get("device", "未知機台")
+            title = str(row.get("title", ""))[:30]
 
-        return f"""### 1. 🔍 【{category_name}】集中問題與熱點 (Patterns within Category)
-- **影響範圍**：本月份【{category_name}】相關工單共 {total} 件，其中約 {top_plant_pct:.0f}% 集中在 **【{top_plant}】**，主要受影響設備/線別為 **【{top_device}】**（佔比約 {top_device_pct:.0f}%）。
-- **代表性回報症狀**：
-{sample_quotes}
+            critical_keywords = ["中斷", "停線", "當機", "無法", "失敗", "crash", "down", "error", "逾時", "timeout"]
+            minor_keywords = ["密碼", "權限", "帳號", "申請", "password", "reset", "忘記"]
 
-### 2. 💡 潛在根因推測 (Hypothesis & Root Cause)
-- 分析此類別描述，研判主要導因為 **【{top_plant} / {top_device}】** 在該月份的通訊交握逾時或背景佇列阻塞，造成現場人員在執行【{category_name}】相關流程時頻繁重試與報錯。
+            if any(kw in desc or kw in title.lower() for kw in critical_keywords):
+                severity = "🔴"
+                critical_ids.append(str(idx))
+            elif any(kw in desc or kw in title.lower() for kw in minor_keywords):
+                severity = "🟢"
+                minor_ids.append(str(idx))
+            else:
+                severity = "🟡"
+
+            table_rows.append(f"| {idx} | {severity} | {plant} | {device} | {title} |")
+
+        case_table = "\n".join(table_rows)
+        cluster_a_ids = ", ".join([f"#{i}" for i in critical_ids]) if critical_ids else "無"
+        minor_case_ids = ", ".join([f"#{i}" for i in minor_ids]) if minor_ids else "無"
+
+        return f"""### 1. 📋 Case 快速索引表 (Quick Index)
+
+| # | 嚴重度 | 廠區 | 設備 | 一句話摘要 |
+|---|--------|------|------|-----------|
+{case_table}
+
+（🔴 嚴重/需立即處理、🟡 注意/需追蹤、🟢 輕微/可略過）
+
+### 2. 🔍 問題分群與根因推測 (Cluster & Root Cause)
+
+**群組 A：{top_plant} / {top_device} 之【{category_name}】集中異常**（涉及 Case {cluster_a_ids}，佔比約 {top_plant_pct:.0f}%）
+- 共通症狀：現場人員執行【{category_name}】相關流程時頻繁出現通訊交握逾時或佇列阻塞
+- 推測根因：{top_plant} 的 {top_device} 於該月份發生通訊參數異動或背景服務資源不足
+
+**🟢 零星個案**（Case {minor_case_ids}，可略過）
 
 ### 3. 📢 月會建議行動方案 (Monthly Action Items)
-1. **短期措施**：請負責 {system_name} 的維運同仁針對 {top_plant} 的 {top_device} 進行通訊參數檢測與快取清理。
-2. **長期預防**：建立【{category_name}】專屬的預警閾值與定期健檢機制，避免跨月重複累積。"""
+
+1. 【短期】請負責 {system_name} 的維運同仁針對 {top_plant} 的 {top_device} 進行通訊參數檢測與快取清理。
+2. 【長期】建立【{category_name}】專屬的預警閾值與定期健檢機制，避免跨月重複累積。"""
+

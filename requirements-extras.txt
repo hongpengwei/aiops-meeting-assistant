@@ -1,0 +1,9 @@
+﻿# AI Providers (依實際使用的 LLM 服務選裝)
+google-genai>=1.0.0
+
+# Database Support (連線公司資料庫時安裝)
+sqlalchemy>=2.0.0
+pyodbc>=5.0.0
+
+# Excel Support (需要讀取 .xlsx 時安裝)
+openpyxl>=3.1.0

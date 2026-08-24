@@ -1,10 +1,11 @@
 import requests
 from typing import Optional
 import logging
+from src.notifications.base import BaseNotifier
 
 logger = logging.getLogger(__name__)
 
-class TeamsNotifier:
+class TeamsNotifier(BaseNotifier):
     """
     Microsoft Teams Webhook 發送器 (支援 Incoming Webhook MessageCard)
     """
@@ -47,3 +48,7 @@ class TeamsNotifier:
         except Exception as e:
             logger.error(f"[Teams Notifier] ❌ Teams 發送錯誤: {e}")
             return False
+
+    def send(self, subject: str, content: str, is_anomaly: bool = False) -> bool:
+        """BaseNotifier 統一介面實作"""
+        return self.send_message(title=subject, text_markdown=content, is_anomaly=is_anomaly)

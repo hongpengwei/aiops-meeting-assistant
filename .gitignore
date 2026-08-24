@@ -44,3 +44,9 @@ $RECYCLE.BIN/
 # Output & Logs (選用，不一定需要進 git)
 output/*.html
 output/*.md
+
+# 真實資料 (避免意外 commit 敏感案件資料)
+data/*.csv
+data/*.xlsx
+data/*.xls
+!data/example_*.csv

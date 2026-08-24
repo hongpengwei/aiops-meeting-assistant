@@ -19,8 +19,9 @@ def create_data_loader(config: Dict[str, Any]) -> BaseCaseLoader:
     elif ds_type == "database":
         db_cfg = ds_config.get("database", {})
         conn_str = db_cfg.get("connection_string", "")
+        conn_str_env = db_cfg.get("connection_string_env_var", "")
         query = db_cfg.get("query_template", "")
-        return DatabaseCaseLoader(connection_string=conn_str, query_template=query)
+        return DatabaseCaseLoader(connection_string=conn_str, query_template=query, connection_string_env_var=conn_str_env)
 
     elif ds_type == "api":
         api_cfg = ds_config.get("api", {})

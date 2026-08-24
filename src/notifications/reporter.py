@@ -9,15 +9,65 @@ from src.notifications.email_sender import EmailNotifier
 
 logger = logging.getLogger(__name__)
 
+
+class ReportRenderer:
+    """
+    報告渲染器：負責將檢測結果與 AI 分析轉換為 Markdown / HTML
+    (單一職責：只負責模板渲染，不涉及推播)
+    """
+
+    def __init__(self):
+        template_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), "templates")
+        self.env = Environment(loader=FileSystemLoader(template_dir))
+
+    def render_markdown(
+        self, 
+        title: str, 
+        meeting_name: str, 
+        result: Union[AnomalyDetectionResult, MonthlyDetectionResult], 
+        ai_analyses: Dict[str, str]
+    ) -> str:
+        template_name = "monthly_report.md.j2" if result.mode == "monthly" else "report.md.j2"
+        template = self.env.get_template(template_name)
+        return template.render(
+            title=title,
+            meeting_name=meeting_name,
+            result=result,
+            ai_analyses=ai_analyses
+        )
+
+    def render_html(
+        self, 
+        title: str, 
+        meeting_name: str, 
+        result: Union[AnomalyDetectionResult, MonthlyDetectionResult], 
+        ai_analyses: Dict[str, str]
+    ) -> str:
+        template_name = "monthly_report.html.j2" if result.mode == "monthly" else "report.html.j2"
+        template = self.env.get_template(template_name)
+        current_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        return template.render(
+            title=title,
+            meeting_name=meeting_name,
+            result=result,
+            ai_analyses=ai_analyses,
+            current_time=current_time
+        )
+
+
 class ReportGenerator:
     """
-    報告產生器與推播分派中心：負責將檢測結果與 AI 分析轉換為 Markdown / HTML 並推播
+    報告產生器與推播分派中心：協調渲染與通知推播
+    (單一職責：只負責協調流程與推播，渲染委派給 ReportRenderer)
     """
 
     def __init__(self, config: Dict[str, Any]):
         self.config = config
         self.notif_cfg = config.get("notifications", {})
         
+        # 渲染器
+        self.renderer = ReportRenderer()
+
         # 本地輸出
         self.local_enabled = self.notif_cfg.get("local", {}).get("enabled", True)
         self.output_dir = self.notif_cfg.get("local", {}).get("output_dir", "./output")
@@ -32,10 +82,6 @@ class ReportGenerator:
 
         # Email 推播
         self.email_notifier = EmailNotifier(config)
-
-        # 初始化 Jinja2 環境
-        template_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), "templates")
-        self.env = Environment(loader=FileSystemLoader(template_dir))
 
     def generate_and_dispatch(
         self, 
@@ -56,13 +102,11 @@ class ReportGenerator:
         status_emoji = "🔴 異常警報" if result.is_anomaly_detected else "🟢 一切正常"
         title = f"【{meeting_name}系統狀況報告】{status_emoji} ({result.target_period_str})"
 
-        # 1. 產生 Markdown
-        md_text = self._build_markdown(title, meeting_name, result, ai_analyses)
+        # 1. 渲染報告
+        md_text = self.renderer.render_markdown(title, meeting_name, result, ai_analyses)
+        html_text = self.renderer.render_html(title, meeting_name, result, ai_analyses)
 
-        # 2. 產生 HTML
-        html_text = self._build_html(title, meeting_name, result, ai_analyses)
-
-        # 3. 本地儲存
+        # 2. 本地儲存
         if self.local_enabled:
             timestamp_str = datetime.now().strftime("%Y%m%d_%H%M%S")
             md_path = os.path.join(self.output_dir, f"{result.mode}_report_{timestamp_str}.md")
@@ -77,14 +121,14 @@ class ReportGenerator:
             logger.info(f"  - Markdown: {os.path.abspath(md_path)}")
             logger.info(f"  - HTML:     {os.path.abspath(html_path)}")
 
-        # 4. Teams 推播
+        # 3. Teams 推播
         self.teams_notifier.send_message(
             title=title, 
             text_markdown=md_text, 
             is_anomaly=result.is_anomaly_detected
         )
 
-        # 5. Email 發信
+        # 4. Email 發信
         self.email_notifier.send_report(
             subject=title,
             html_content=html_text,
@@ -93,36 +137,3 @@ class ReportGenerator:
 
         return md_text, html_text
 
-    def _build_markdown(
-        self, 
-        title: str, 
-        meeting_name: str, 
-        result: Union[AnomalyDetectionResult, MonthlyDetectionResult], 
-        ai_analyses: Dict[str, str]
-    ) -> str:
-        template_name = "monthly_report.md.j2" if result.mode == "monthly" else "report.md.j2"
-        template = self.env.get_template(template_name)
-        return template.render(
-            title=title,
-            meeting_name=meeting_name,
-            result=result,
-            ai_analyses=ai_analyses
-        )
-
-    def _build_html(
-        self, 
-        title: str, 
-        meeting_name: str, 
-        result: Union[AnomalyDetectionResult, MonthlyDetectionResult], 
-        ai_analyses: Dict[str, str]
-    ) -> str:
-        template_name = "monthly_report.html.j2" if result.mode == "monthly" else "report.html.j2"
-        template = self.env.get_template(template_name)
-        current_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        return template.render(
-            title=title,
-            meeting_name=meeting_name,
-            result=result,
-            ai_analyses=ai_analyses,
-            current_time=current_time
-        )

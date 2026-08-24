@@ -11,7 +11,12 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 ENV TZ=Asia/Taipei
 
 COPY requirements.txt .
+COPY requirements-extras.txt .
 RUN pip install --no-cache-dir -r requirements.txt
+
+# 可選依賴：docker build --build-arg INSTALL_EXTRAS=true .
+ARG INSTALL_EXTRAS=false
+RUN if [ "$INSTALL_EXTRAS" = "true" ]; then pip install --no-cache-dir -r requirements-extras.txt; fi
 
 COPY . .
 
