@@ -19,6 +19,11 @@ class ReportRenderer:
     def __init__(self):
         template_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), "templates")
         self.env = Environment(loader=FileSystemLoader(template_dir))
+        try:
+            import markdown
+            self.env.filters["markdown"] = lambda text: markdown.markdown(text)
+        except ImportError:
+            self.env.filters["markdown"] = lambda text: text.replace("\n", "<br>")
 
     def render_markdown(
         self, 

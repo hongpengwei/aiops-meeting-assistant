@@ -19,10 +19,24 @@ class AIAnalyzer:
     def __init__(self, config: Dict[str, Any]):
         self.config = config.get("ai", {})
         self.provider = self.config.get("provider", "gemini").lower()
-        self.model_name = self.config.get("model_name", "gemini-2.5-flash")
+        self.model_name = self.config.get("model_name", "gemini-3.5-flash")
         self.api_key_env_var = self.config.get("api_key_env_var", "GEMINI_API_KEY")
         self.max_cases = self.config.get("max_cases_to_analyze", 50)
-        self.api_key = os.getenv(self.api_key_env_var, "").strip()
+        
+        # 支援多種 API Key 提供方式：
+        # 1. 系統環境變數 (例如 GEMINI_API_KEY)
+        # 2. config.yaml 中的 api_key 欄位
+        # 3. 直接貼在 api_key_env_var 欄位中的 Key 字串
+        env_val = os.getenv(self.api_key_env_var, "").strip() if self.api_key_env_var else ""
+        direct_key = str(self.config.get("api_key", "")).strip()
+        if env_val:
+            self.api_key = env_val
+        elif direct_key:
+            self.api_key = direct_key
+        elif self.api_key_env_var and len(self.api_key_env_var) > 20 and (" " not in self.api_key_env_var):
+            self.api_key = self.api_key_env_var.strip()
+        else:
+            self.api_key = ""
 
         self._gemini_client = None
         if self.provider == "gemini" and self.api_key:
@@ -85,7 +99,7 @@ class AIAnalyzer:
                 return self._call_custom_http_api(user_prompt)
             else:
                 return self._call_gemini_api(user_prompt)
-        except (requests.exceptions.RequestException, TimeoutError, ConnectionError, RuntimeError) as e:
+        except Exception as e:
             logger.warning(f"[AI Analyzer] ⚠️ AI API ({self.provider}) 調用失敗 ({e})，切換至智慧啟發式分析模式。")
             return self._mock_heuristic_analysis(system_name, target_period_str, cases_df)
 
@@ -127,7 +141,7 @@ class AIAnalyzer:
                 return self._call_custom_http_api(user_prompt)
             else:
                 return self._call_gemini_api(user_prompt)
-        except (requests.exceptions.RequestException, TimeoutError, ConnectionError, RuntimeError) as e:
+        except Exception as e:
             logger.warning(f"[AI Analyzer] ⚠️ AI API ({self.provider}) 調用失敗 ({e})，切換至智慧啟發式類別分析模式。")
             return self._mock_category_analysis(system_name, category_name, target_period_str, cases_df)
 
@@ -224,12 +238,11 @@ class AIAnalyzer:
         cases_df: pd.DataFrame
     ) -> str:
         """
-        智慧啟發式模擬分析 (晨會/課會模式) — 現象分群歸納格式
+        智慧啟發式模擬分析 (晨會/課會模式) — 專注熱點分佈與問題同質性
         """
         total = len(cases_df)
         sample_df = cases_df.head(self.max_cases)
 
-        # 統計熱點
         plant_counts = cases_df["plant"].value_counts()
         top_plant = plant_counts.index[0] if len(plant_counts) > 0 else "未知廠區"
         top_plant_count = plant_counts.iloc[0] if len(plant_counts) > 0 else 0
@@ -237,6 +250,8 @@ class AIAnalyzer:
 
         device_counts = cases_df["device"].value_counts()
         top_device = device_counts.index[0] if len(device_counts) > 0 else "未知機台"
+        top_device_count = device_counts.iloc[0] if len(device_counts) > 0 else 0
+        top_device_pct = (top_device_count / total * 100) if total > 0 else 0
 
         # 分群識別
         critical_keywords = ["中斷", "停線", "當機", "無法", "失敗", "crash", "down", "error", "逾時", "timeout", "卡站", "緊急"]
@@ -253,28 +268,20 @@ class AIAnalyzer:
             else:
                 routine_cases.append(f"#{idx}")
 
-        cluster_a_str = ", ".join(cluster_a_cases[:5]) if cluster_a_cases else "無明顯群聚"
-        if len(cluster_a_cases) > 5:
+        cluster_a_str = ", ".join(cluster_a_cases[:4]) if cluster_a_cases else "無明顯群聚"
+        if len(cluster_a_cases) > 4:
             cluster_a_str += f" 等共 {len(cluster_a_cases)} 筆"
 
         routine_count = max(0, total - len(cluster_a_cases))
         routine_sample = ", ".join(routine_cases[:3]) if routine_cases else "無"
 
-        return f"""### 1. 🔍 案件現象分群與熱點分析 (Pattern Breakdown)
+        hotspot_str = f"集中於 **{top_plant}** (佔 {top_plant_pct:.0f}%, 共 {top_plant_count} 件)"
+        if top_device_pct >= 30 and top_device not in ("General", "未知機台"):
+            hotspot_str += f"、機台以 **{top_device}** 為主 (佔 {top_device_pct:.0f}%)"
 
-- **🔥 群組 A：{top_plant} / {top_device} 批次操作異常與通訊受阻**
-  - **分佈範圍**：高度集中於 **【{top_plant} / {top_device}】**（佔比約 {top_plant_pct:.0f}%，共 {top_plant_count} 件）
-  - **主要現象**：現場人員集中反映機台通訊逾時、狀態鎖定或派工受阻
-  - **涉及案件**：Case {cluster_a_str}
-  - **推測根因**：{top_plant} 之 {top_device} 近期維護或通訊交握異常，導致背景服務佇列阻塞
-
-- **🟢 常態/零星個案**（共 {routine_count} 件，如 Case {routine_sample}）：
-  - 屬於個別廠區之日常例行維運（如密碼重設、一般權限開通與單一操作諮詢），經評估無群聚性系統風險，維持日常維運 SOP 處理。
-
-### 2. 📢 會議發言重點與行動建議 (Action Items)
-
-1. 【現況回報】{target_period_str} {system_name} 案件數顯著偏高（共 {total} 件），主因集中於 {top_plant} 的 {top_device}。
-2. 【建議處置】會後由負責 {top_plant} 的維運工程師協同廠端 IT 檢查 {top_device} 連線品質與通訊參數。"""
+        return f"""- 📍 **熱點分佈 (廠區/機台)**：{hotspot_str}
+- ⚠️ **問題同質性 (現象/報錯)**：多數案件反映連線交握逾時或操作卡站 (涉及 Case {cluster_a_str})
+- 🟢 **分散/零星案件**：共 {routine_count} 筆屬各廠區例行維運個案 (如 Case {routine_sample})，無群聚風險。"""
 
     def _mock_category_analysis(
         self,
@@ -284,7 +291,7 @@ class AIAnalyzer:
         cases_df: pd.DataFrame
     ) -> str:
         """
-        智慧啟發式模擬類別分析 (月報模式專用) — 現象分群歸納格式
+        智慧啟發式模擬類別分析 (月報模式專用) — 專注熱點分佈與問題同質性
         """
         total = len(cases_df)
         sample_df = cases_df.head(self.max_cases)
@@ -296,6 +303,8 @@ class AIAnalyzer:
 
         device_counts = cases_df["device"].value_counts()
         top_device = device_counts.index[0] if len(device_counts) > 0 else "未知機台"
+        top_device_count = device_counts.iloc[0] if len(device_counts) > 0 else 0
+        top_device_pct = (top_device_count / total * 100) if total > 0 else 0
 
         # 分群識別
         critical_keywords = ["中斷", "停線", "當機", "無法", "失敗", "crash", "down", "error", "逾時", "timeout", "卡站", "緊急"]
@@ -312,28 +321,20 @@ class AIAnalyzer:
             else:
                 routine_cases.append(f"#{idx}")
 
-        cluster_a_str = ", ".join(cluster_a_cases[:5]) if cluster_a_cases else "無明顯群聚"
-        if len(cluster_a_cases) > 5:
+        cluster_a_str = ", ".join(cluster_a_cases[:4]) if cluster_a_cases else "無明顯群聚"
+        if len(cluster_a_cases) > 4:
             cluster_a_str += f" 等共 {len(cluster_a_cases)} 筆"
 
         routine_count = max(0, total - len(cluster_a_cases))
         routine_sample = ", ".join(routine_cases[:3]) if routine_cases else "無"
 
-        return f"""### 1. 🔍 【{category_name}】問題現象分群 (Pattern Breakdown)
+        hotspot_str = f"主要集中於 **{top_plant}** (佔 {top_plant_pct:.0f}%, 共 {top_plant_count} 件)"
+        if top_device_pct >= 30 and top_device not in ("General", "未知機台"):
+            hotspot_str += f"、設備以 **{top_device}** 為主 (佔 {top_device_pct:.0f}%)"
 
-- **🔥 主要集中問題：{top_plant} / {top_device} 之【{category_name}】頻發異常**
-  - **熱點分佈**：主要集中於 **【{top_plant} / {top_device}】**（佔比約 {top_plant_pct:.0f}%，共 {top_plant_count} 件）
-  - **現象描述**：執行【{category_name}】流程時頻繁出現交握逾時、佇列積壓或操作卡站
-  - **涉及案件**：Case {cluster_a_str} （可供調閱現場描述）
-  - **可能導因**：{top_plant} 該設備於本月份發生通訊參數設定異動或背景服務資源飽和
-
-- **🟢 分散/常態個案**（共 {routine_count} 件，如 Case {routine_sample}）：
-  - 屬於分散於其他廠區之獨立單一事件，無明顯群聚或跨機台擴散趨勢，維持例行維運監控。
-
-### 2. 📢 月會改善行動方案 (Action Items)
-
-1. 【短期措施】請負責 {system_name} 的維運同仁針對 {top_plant} 的 {top_device} 進行通訊參數校驗與快取清理。
-2. 【長期預防】建立【{category_name}】專屬的預警閾值與定期健檢機制，避免跨月重複累積。"""
+        return f"""- 📍 **熱點分佈 (廠區/機台)**：{hotspot_str}
+- ⚠️ **問題同質性 (現象/報錯)**：集中出現【{category_name}】相關之處理逾時或狀態鎖定 (涉及 Case {cluster_a_str})
+- 🟢 **分散/零星案件**：共 {routine_count} 筆屬分散於其他廠區之獨立事件 (如 Case {routine_sample})，無擴散趨勢。"""
 
 
 

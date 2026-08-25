@@ -38,7 +38,7 @@
 {% if not result.is_anomaly_detected %}
 > 💡 **月會結論**：本月各系統與各項類別工單量均在正常基準範圍內，無特定機台、廠區或流程之突發群聚異常，月會可快速通過。
 {% else %}
-## 🤖 第三層：AI 深度歸因分析 (聚焦本月暴增類別)
+## 🤖 第三層：AI 暴增類別熱點分佈與現象歸因 (聚焦本月暴增類別)
 
 {% for key, analysis in ai_analyses.items() %}
 ### {{ key }}

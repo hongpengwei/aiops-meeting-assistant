@@ -96,13 +96,13 @@
         </div>
         {% endfor %}
 
-        <h2 class="section-title">🤖 第三層：AI 深度歸因分析 (聚焦本月暴增類別)</h2>
+        <h2 class="section-title">🤖 第三層：AI 暴增類別熱點分佈與現象歸因</h2>
         {% if result.is_anomaly_detected %}
             {% for key, analysis in ai_analyses.items() %}
             <div class="card card-danger">
                 <h3 style="margin-top: 0; color: #d93025; font-size: 16px;">📌 {{ key }}</h3>
-                <div style="line-height: 1.7; color: #3c4043; font-size: 14px;">
-                    {{ analysis | replace('\n', '<br>') }}
+                <div style="line-height: 1.6; color: #3c4043; font-size: 14px;" class="ai-content">
+                    {{ analysis | markdown }}
                 </div>
             </div>
             {% endfor %}
