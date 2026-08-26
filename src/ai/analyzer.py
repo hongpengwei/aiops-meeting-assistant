@@ -23,18 +23,15 @@ class AIAnalyzer:
         self.api_key_env_var = self.config.get("api_key_env_var", "GEMINI_API_KEY")
         self.max_cases = self.config.get("max_cases_to_analyze", 50)
         
-        # 支援多種 API Key 提供方式：
-        # 1. 系統環境變數 (例如 GEMINI_API_KEY)
-        # 2. config.yaml 中的 api_key 欄位
-        # 3. 直接貼在 api_key_env_var 欄位中的 Key 字串
+        # API Key 讀取方式 (僅支援安全方式)：
+        # 1. 透過環境變數名稱讀取 (推薦，例如設定 api_key_env_var: "GEMINI_API_KEY")
+        # 2. config.yaml 中的 api_key 欄位 (不推薦，僅供本機測試)
         env_val = os.getenv(self.api_key_env_var, "").strip() if self.api_key_env_var else ""
         direct_key = str(self.config.get("api_key", "")).strip()
         if env_val:
             self.api_key = env_val
         elif direct_key:
             self.api_key = direct_key
-        elif self.api_key_env_var and len(self.api_key_env_var) > 20 and (" " not in self.api_key_env_var):
-            self.api_key = self.api_key_env_var.strip()
         else:
             self.api_key = ""
 

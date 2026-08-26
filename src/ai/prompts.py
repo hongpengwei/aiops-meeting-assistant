@@ -32,8 +32,8 @@ CASE_ANALYSIS_USER_PROMPT_TEMPLATE = """
 """
 
 CATEGORY_ANALYSIS_USER_PROMPT_TEMPLATE = """
-【月報異常類別】
-- 系統：{system_name} | 類別：【{category_name}】 | 月份：{target_period_str} | 案件量：{case_count} 件
+【異常類別數據】
+- 系統：{system_name} | 類別：【{category_name}】 | 期間：{target_period_str} | 案件量：{case_count} 件
 
 提報人描述清單 (前 {displayed_count} 筆)：
 ---

@@ -14,16 +14,36 @@
 {%- set growth_str = ("%+.0f%%"|format(s.growth_rate)) if s.target_count > 0 or s.baseline_avg > 0 else "0%" %}
 | `{{ s.system_name }}` | {{ s.target_count }} 件 | {{ "%.1f"|format(s.baseline_avg) }} 件 | {{ growth_str }} | {{ status_tag }} |
 {%- endfor %}
+
+{% if result.system_categories %}
+---
+
+## 🔍 各系統類別 (Category) 深入統計表
+
+{% for sys_name, cat_list in result.system_categories.items() %}
+### 系統：`{{ sys_name }}`
+| 案件類別 | 當期數量 | 基準平均 | 增長率 | 狀態 |
+| :--- | :---: | :---: | :---: | :--- |
+{% for c in cat_list %}
+{% set cat_status = "🔴 **暴增重點**" if c.is_anomaly else "🟢 正常" %}
+{% set cat_growth = "%+.0f%%"|format(c.growth_rate) if (c.target_count > 0 or c.baseline_avg > 0) else "0%" %}
+| {{ c.category_name }} | {{ c.target_count }} 件 | {{ "%.1f"|format(c.baseline_avg) }} 件 | {{ cat_growth }} | {{ cat_status }} |
+{% endfor %}
+
+{% endfor %}
+{% endif %}
+
 {% if not result.is_anomaly_detected %}
 > 💡 **會前結論**：昨日/當週各系統工單量平穩，無特定機台或廠區之突發異常，會議可直接快速通過。
 {%- else %}
 ---
 ## 🤖 AI 案件熱點分佈與現象歸因
-{% for sys_name, analysis in ai_analyses.items() %}
-### 系統：`{{ sys_name }}`
+{% for key, analysis in ai_analyses.items() %}
+### {{ key if "系統" in key else "系統：" ~ key }}
 
 {{ analysis }}
 
 ---
 {%- endfor %}
 {%- endif %}
+

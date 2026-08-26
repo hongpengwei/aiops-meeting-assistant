@@ -4,6 +4,7 @@ import sys
 from datetime import datetime, timedelta
 import yaml
 import pandas as pd
+from concurrent.futures import ThreadPoolExecutor, as_completed
 import logging
 
 from src.utils import (
@@ -64,10 +65,16 @@ def run_pipeline(mode: str = "daily", target_date_str: str = None, config_path: 
         if os.environ.get("AIOPS_ENV") == "production":
             raise RuntimeError(f"在 production 環境下無法讀取資料，且禁止自動生成測試數據！原始錯誤: {e}") from e
         
+        # 僅在 CSV 模式下才嘗試自動生成測試數據
+        data_source_type = config.get("data_source", {}).get("type", "csv")
+        if data_source_type != "csv":
+            raise RuntimeError(f"資料來源類型為 '{data_source_type}'，無法自動生成測試數據。請檢查連線設定。原始錯誤: {e}") from e
+
+        csv_path = config.get("data_source", {}).get("csv", {}).get("file_path", "./data/mock_cases.csv")
         logger.warning(f"[2/5] ⚠️ {e}")
-        logger.info("💡 正在自動為您生成測試數據 (scripts/generate_mock_data.py)...")
+        logger.info(f"💡 正在自動為您生成測試數據至 {csv_path} (scripts/generate_mock_data.py)...")
         from scripts.generate_mock_data import generate_mock_data
-        generate_mock_data(days=180)
+        generate_mock_data(days=180, output_path=csv_path)
         df = loader.load_cases(start_date=start_date, end_date=end_date)
         logger.info(f"[2/5] 📦 成功讀取 {len(df)} 筆 Case 歷史資料")
 
@@ -90,48 +97,70 @@ def run_pipeline(mode: str = "daily", target_date_str: str = None, config_path: 
     for s in result.systems:
         status_icon = "🔴" if s.is_anomaly else "🟢"
         logger.info(f"    {status_icon} {s.system_name:<15}: 當期 {s.target_count:>2} 件 (基準均值 {s.baseline_avg:>4.1f} 件) | {s.reason}")
+        if result.anomalous_categories and s.system_name in result.anomalous_categories:
+            for cat_m in result.anomalous_categories[s.system_name]:
+                logger.info(f"      ↳ 🔴 類別【{cat_m.category_name}】: 當期 {cat_m.target_count} 件 (基準均值 {cat_m.baseline_avg:.1f} 件) | {cat_m.reason}")
 
     # 4. AI 深度歸因分析 (若有異常才觸發)
     ai_analyses = {}
     if result.is_anomaly_detected:
         ai_analyzer = AIAnalyzer(config)
 
-        if mode == "monthly":
-            # 月報模式：針對各暴增系統的暴增類別 (Category) 進行深度歸因
+        if mode in ["weekly", "monthly"]:
+            # 週報與月報模式：支援系統級與類別級兩層深度歸因
             total_anom_cats = sum(len(cats) for cats in result.anomalous_categories.values())
-            logger.info(f"\n[4/5] 🤖 啟動月報 AI 類別文字描述深度歸因 (共 {len(result.anomalous_systems)} 個系統、{total_anom_cats} 個暴增類別需分析)...")
+            period_unit = "月" if mode == "monthly" else "週"
+            logger.info(f"\n[4/5] 🤖 啟動{period_unit}報 AI 類別文字描述深度歸因 (共 {len(result.anomalous_systems)} 個系統總量暴增、{total_anom_cats} 個類別暴增需分析)...")
 
-            for sys_metric in result.anomalous_systems:
-                sys_name = sys_metric.system_name
-                anom_cats = result.anomalous_categories.get(sys_name, [])
+            # 使用 ThreadPoolExecutor 併發呼叫 AI API，減少多系統/類別暴增時的等待時間
+            futures = {}
+            with ThreadPoolExecutor(max_workers=4) as executor:
+                for sys_metric in result.systems:
+                    sys_name = sys_metric.system_name
+                    anom_cats = result.anomalous_categories.get(sys_name, [])
 
-                if anom_cats:
-                    for cat_metric in anom_cats:
-                        cat_name = cat_metric.category_name
-                        cat_cases_df = result.target_cases_df[
-                            (result.target_cases_df["system_name"] == sys_name) & 
-                            (result.target_cases_df["category"] == cat_name)
-                        ]
-                        logger.info(f"  🔍 正在分析 [{sys_name}] 類別【{cat_name}】的 {len(cat_cases_df)} 筆提報人描述...")
-                        analysis_text = ai_analyzer.analyze_category_cases(
+                    if anom_cats:
+                        for cat_metric in anom_cats:
+                            cat_name = cat_metric.category_name
+                            cat_cases_df = result.target_cases_df[
+                                (result.target_cases_df["system_name"] == sys_name) & 
+                                (result.target_cases_df["category"] == cat_name)
+                            ]
+                            unit_str = "當月" if mode == "monthly" else "當週"
+                            avg_str = "月均" if mode == "monthly" else "週均"
+                            key = f"系統 `{sys_name}` - 類別【{cat_name}】({unit_str} {cat_metric.target_count} 件, {avg_str} {cat_metric.baseline_avg:.1f} 件)"
+                            logger.info(f"  🔍 提交分析任務 [{sys_name}] 類別【{cat_name}】({len(cat_cases_df)} 筆描述)...")
+                            future = executor.submit(
+                                ai_analyzer.analyze_category_cases,
+                                system_name=sys_name,
+                                category_name=cat_name,
+                                target_period_str=result.target_period_str,
+                                cases_df=cat_cases_df
+                            )
+                            futures[future] = key
+                    elif sys_metric.is_anomaly:
+                        sys_cases_df = result.target_cases_df[result.target_cases_df["system_name"] == sys_name]
+                        key = f"系統 `{sys_name}` (全案件綜合歸因)"
+                        logger.info(f"  🔍 提交分析任務 [{sys_name}] 全類別 ({len(sys_cases_df)} 筆描述)...")
+                        future = executor.submit(
+                            ai_analyzer.analyze_system_cases,
                             system_name=sys_name,
-                            category_name=cat_name,
                             target_period_str=result.target_period_str,
-                            cases_df=cat_cases_df
+                            cases_df=sys_cases_df
                         )
-                        ai_analyses[f"系統 `{sys_name}` - 類別【{cat_name}】(當月 {cat_metric.target_count} 件, 月均 {cat_metric.baseline_avg:.1f} 件)"] = analysis_text
-                else:
-                    # 系統暴增但無特定暴增類別時，整體分析該系統
-                    sys_cases_df = result.target_cases_df[result.target_cases_df["system_name"] == sys_name]
-                    logger.info(f"  🔍 正在分析 [{sys_name}] 全類別的 {len(sys_cases_df)} 筆提報人描述...")
-                    analysis_text = ai_analyzer.analyze_system_cases(
-                        system_name=sys_name,
-                        target_period_str=result.target_period_str,
-                        cases_df=sys_cases_df
-                    )
-                    ai_analyses[f"系統 `{sys_name}` (全案件綜合歸因)"] = analysis_text
+                        futures[future] = key
+
+                # 收集併發結果
+                for future in as_completed(futures):
+                    key = futures[future]
+                    try:
+                        ai_analyses[key] = future.result()
+                        logger.info(f"  ✅ {key} 分析完成")
+                    except Exception as e:
+                        logger.error(f"  ❌ {key} 分析失敗: {e}")
+                        ai_analyses[key] = f"AI 分析失敗: {e}"
         else:
-            # 晨會 / 課會模式：系統級綜合歸因
+            # 晨會模式：系統級綜合歸因
             logger.info(f"\n[4/5] 🤖 啟動 AI 案件文字描述深度歸因 (共 {len(result.anomalous_systems)} 個系統需分析)...")
             for sys_metric in result.anomalous_systems:
                 sys_name = sys_metric.system_name

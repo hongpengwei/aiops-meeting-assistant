@@ -1,4 +1,4 @@
-﻿import os
+import os
 import time
 import logging
 from datetime import datetime
@@ -41,8 +41,23 @@ class ApiCaseLoader(BaseCaseLoader):
                 response.raise_for_status()
 
                 data = response.json()
-                # 假設 API 回傳格式為 list of dicts，或 dict 中有 'items' / 'data'
-                items = data.get("items", data) if isinstance(data, dict) else data
+                # 支援多種企業 API 回傳格式：
+                # - 直接返回 list: [{...}, {...}]
+                # - 封裝在 dict 中: {"items": [...]}, {"data": [...]}, {"records": [...]}, {"results": [...]}
+                if isinstance(data, list):
+                    items = data
+                elif isinstance(data, dict):
+                    # 依優先順序嘗試常見的 Payload key
+                    for key in ("items", "data", "records", "results", "value", "issues"):
+                        if key in data and isinstance(data[key], list):
+                            items = data[key]
+                            break
+                    else:
+                        # 若無已知 key，記錄警告並使用整個 dict
+                        logger.warning(f"[API Loader] 無法辨識 API 回傳結構的資料欄位 (keys: {list(data.keys())})，嘗試直接解析...")
+                        items = [data]
+                else:
+                    raise ValueError(f"[API Loader] 非預期的 API 回傳格式: {type(data)}")
 
                 df = pd.DataFrame(items)
                 return self.validate_and_clean(df)

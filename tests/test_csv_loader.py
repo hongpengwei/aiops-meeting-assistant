@@ -55,3 +55,53 @@ class TestCsvLoader:
         )
         assert len(result) == 1
         assert result.iloc[0]['case_id'] == 'C2'
+
+    def test_future_schema_and_tool_extraction(self, tmp_path):
+        """
+        測試真實環境欄位 (caseid, createdatetime, fab, subject, username, productname, issuetype)
+        驗證自動映射、時間格式轉換以及從 subject 智慧提取 tool_id
+        """
+        csv_path = str(tmp_path / 'real_world_cases.csv')
+        df = pd.DataFrame({
+            'caseid': ['case-20260825-00008', 'case-20260825-00009'],
+            'createdatetime': ['2026/8/25 12:20:26 AM', '2026/8/25 2:45:10 PM'],
+            'fab': ['F15', 'Fab 12A'],
+            'subject': ['[ccop alarm:fdcfilecnt]f15_ypoctc的ftc...', 'F12A_Track-03 派工卡站'],
+            'username': ['alex_chen', 'john_lin'],
+            'productname': ['fdc', 'tcs/tap'],
+            'issuetype': ['fdcfilecnt', '派工作業']
+        })
+        df.to_csv(csv_path, index=False)
+
+        loader = CsvCaseLoader(csv_path)
+        result = loader.load_cases(
+            start_date=datetime(2026, 8, 25, 0, 0, 0),
+            end_date=datetime(2026, 8, 25, 23, 59, 59)
+        )
+
+        assert len(result) == 2
+        # 驗證欄位名稱已轉換為標準欄位
+        assert list(result.columns) == ['case_id', 'created_at', 'system_name', 'category', 'plant', 'device', 'title', 'description', 'reporter']
+
+        # 驗證第 1 筆 (F15 ypoctc, AM 時間, 類別)
+        row1 = result.iloc[0]
+        assert row1['case_id'] == 'case-20260825-00008'
+        assert row1['created_at'] == pd.Timestamp('2026-08-25 00:20:26')
+        assert row1['plant'] == 'F15'
+        assert row1['device'] == 'ypoctc'
+        assert row1['system_name'] == 'fdc'
+        assert row1['category'] == 'fdcfilecnt'
+        assert row1['reporter'] == 'alex_chen'
+        assert row1['title'] == '[ccop alarm:fdcfilecnt]f15_ypoctc的ftc...'
+        assert row1['description'] == '[ccop alarm:fdcfilecnt]f15_ypoctc的ftc...'
+
+        # 驗證第 2 筆 (Fab 12A Track-03, PM 時間, 類別)
+        row2 = result.iloc[1]
+        assert row2['case_id'] == 'case-20260825-00009'
+        assert row2['created_at'] == pd.Timestamp('2026-08-25 14:45:10')
+        assert row2['plant'] == 'Fab 12A'
+        assert row2['device'] == 'Track-03'
+        assert row2['system_name'] == 'tcs/tap'
+        assert row2['category'] == '派工作業'
+        assert row2['reporter'] == 'john_lin'
+

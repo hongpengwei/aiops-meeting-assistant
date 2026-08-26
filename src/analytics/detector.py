@@ -38,6 +38,8 @@ class AnomalyDetectionResult:
     is_anomaly_detected: bool
     systems: List[SystemMetrics] = field(default_factory=list)
     anomalous_systems: List[SystemMetrics] = field(default_factory=list)
+    system_categories: Dict[str, List[CategoryMetrics]] = field(default_factory=dict)
+    anomalous_categories: Dict[str, List[CategoryMetrics]] = field(default_factory=dict)
     target_cases_df: pd.DataFrame = field(default_factory=pd.DataFrame)
 
 @dataclass
@@ -63,14 +65,21 @@ class AnomalyDetector:
     """
     統計異常檢測引擎：
     - 晨會 (daily): 比較昨日 vs 前 7 天平均
-    - 課會 (weekly): 比較上週 vs 過去 N 週週平均
-    - 月會 (monthly): 兩層檢測 (本月系統總量 vs 過去 N 月均值 -> 異常系統的各 Category 深入比對)
+    - 課會 (weekly): 兩層檢測 (上週系統總量 vs 過去 N 週週均 -> 各 Category 深入比對)
+    - 月會 (monthly): 兩層檢測 (本月系統總量 vs 過去 N 月月均 -> 各 Category 深入比對)
     """
 
     def __init__(self, config: Dict[str, Any]):
         self.config = config.get("thresholds", {})
         self.daily_cfg = self.config.get("daily", {"baseline_days": 7, "multiplier": 1.4, "min_spike_cases": 5})
-        self.weekly_cfg = self.config.get("weekly", {"baseline_weeks": 4, "multiplier": 1.3, "min_spike_cases": 10})
+        self.weekly_cfg = self.config.get("weekly", {
+            "baseline_weeks": 4,
+            "multiplier": 1.3,
+            "min_spike_cases": 10,
+            "category_multiplier": 1.4,
+            "category_min_spike": 4,
+            "top_n_categories": 5
+        })
         self.monthly_cfg = self.config.get("monthly", {
             "baseline_months": 3,
             "multiplier": 1.3,
@@ -108,8 +117,22 @@ class AnomalyDetector:
                 # Calculate week index
                 baseline_df["week"] = (pd.to_datetime(baseline_df["date"]) - pd.to_datetime(baseline_start_date)).dt.days // 7
                 daily_or_weekly_counts = baseline_df.groupby(["system_name", "week"]).size()
+                # 補齊零案件的週次 (確保標準差計算準確)
+                all_weeks = range(baseline_periods)
+                all_sys = baseline_df["system_name"].unique()
+                full_index = pd.MultiIndex.from_product([all_sys, all_weeks], names=["system_name", "week"])
+                daily_or_weekly_counts = daily_or_weekly_counts.reindex(full_index, fill_value=0)
             else:
                 daily_or_weekly_counts = baseline_df.groupby(["system_name", "date"]).size()
+                # 補齊零案件的日期 (確保標準差計算準確)
+                all_dates = pd.date_range(
+                    start=baseline_df["date"].min(),
+                    end=baseline_df["date"].max(),
+                    freq="D"
+                ).date
+                all_sys = baseline_df["system_name"].unique()
+                full_index = pd.MultiIndex.from_product([all_sys, all_dates], names=["system_name", "date"])
+                daily_or_weekly_counts = daily_or_weekly_counts.reindex(full_index, fill_value=0)
         else:
             daily_or_weekly_counts = pd.Series(dtype=int)
 
@@ -215,7 +238,9 @@ class AnomalyDetector:
 
     def analyze_weekly(self, df: pd.DataFrame, target_week_end: Optional[datetime.date] = None) -> AnomalyDetectionResult:
         """
-        每週課會分析：上週 (7天) vs 過去 N 週
+        每週課會分析 (兩層檢測)：
+        1. 第一層 (系統級)：上週 (7天) vs 過去 N 週週平均
+        2. 第二層 (類別級)：比對各 Category 數量與週均值，揪出暴增類別 (即使系統總量未超標)
         """
         if df.empty:
             return AnomalyDetectionResult(
@@ -227,6 +252,9 @@ class AnomalyDetector:
 
         df = df.copy()
         df["date"] = df["created_at"].dt.date
+        if "category" not in df.columns:
+            df["category"] = "未分類"
+        df["category"] = df["category"].fillna("未分類")
 
         if target_week_end is None:
             target_week_end = df["date"].max()
@@ -234,8 +262,11 @@ class AnomalyDetector:
         target_week_start = target_week_end - timedelta(days=6)
 
         baseline_weeks = self.weekly_cfg.get("baseline_weeks", 4)
-        multiplier = self.weekly_cfg.get("multiplier", 1.3)
-        min_spike = self.weekly_cfg.get("min_spike_cases", 10)
+        sys_multiplier = self.weekly_cfg.get("multiplier", 1.3)
+        sys_min_spike = self.weekly_cfg.get("min_spike_cases", 10)
+        cat_multiplier = self.weekly_cfg.get("category_multiplier", 1.4)
+        cat_min_spike = self.weekly_cfg.get("category_min_spike", 4)
+        top_n_cat = self.weekly_cfg.get("top_n_categories", 5)
 
         baseline_start_date = target_week_start - timedelta(days=baseline_weeks * 7)
         baseline_end_date = target_week_start - timedelta(days=1)
@@ -244,21 +275,122 @@ class AnomalyDetector:
         baseline_df = df[(df["date"] >= baseline_start_date) & (df["date"] <= baseline_end_date)]
 
         actual_baseline_weeks = max(baseline_weeks, 1)
-        baseline_period_str = f"{baseline_start_date} ~ {baseline_end_date} (前 {baseline_weeks} 週)"
+        baseline_period_str = f"{baseline_start_date} ~ {baseline_end_date} (前 {actual_baseline_weeks} 週)"
         target_period_str = f"{target_week_start} ~ {target_week_end} (當週)"
 
-        return self._analyze_common(
-            df=df,
-            target_df=target_df,
-            baseline_df=baseline_df,
-            baseline_periods=actual_baseline_weeks,
-            multiplier=multiplier,
-            min_spike=min_spike,
+        # ==========================================
+        # 第 1 層：系統級檢測 (System Level)
+        # ==========================================
+        all_systems = sorted(df["system_name"].unique())
+        system_metrics_list = []
+        anomalous_systems = []
+
+        target_sys_counts = target_df.groupby("system_name").size() if not target_df.empty else pd.Series(dtype=int)
+        baseline_sys_totals = baseline_df.groupby("system_name").size() if not baseline_df.empty else pd.Series(dtype=int)
+
+        for sys_name in all_systems:
+            target_count = int(target_sys_counts.get(sys_name, 0))
+            baseline_total = int(baseline_sys_totals.get(sys_name, 0))
+            base_avg = baseline_total / actual_baseline_weeks
+
+            diff = target_count - base_avg
+            growth_rate = ((target_count - base_avg) / max(base_avg, 1.0)) * 100.0
+
+            is_anomaly = False
+            if target_count >= (base_avg * sys_multiplier) and diff >= sys_min_spike:
+                is_anomaly = True
+                reason = f"當週 {target_count} 件，超過過去 {actual_baseline_weeks} 週平均 ({base_avg:.1f} 件) 達 {growth_rate:+.0f}% (增加 {diff:+.1f} 件)"
+            elif target_count == 0 and base_avg == 0:
+                reason = "運作正常，無案件"
+            else:
+                reason = f"正常範圍 (當週 {target_count} 件 / 週平均 {base_avg:.1f} 件)"
+
+            metric = SystemMetrics(
+                system_name=sys_name,
+                target_count=target_count,
+                baseline_avg=base_avg,
+                baseline_std=0.0,
+                diff=diff,
+                growth_rate=growth_rate,
+                is_anomaly=is_anomaly,
+                reason=reason
+            )
+            system_metrics_list.append(metric)
+            if is_anomaly:
+                anomalous_systems.append(metric)
+
+        # ==========================================
+        # 第 2 層：類別級深入檢測 (Category Level)
+        # ==========================================
+        system_categories: Dict[str, List[CategoryMetrics]] = {}
+        anomalous_categories: Dict[str, List[CategoryMetrics]] = {}
+
+        for sys_metric in system_metrics_list:
+            sys_name = sys_metric.system_name
+            sys_target_df = target_df[target_df["system_name"] == sys_name]
+            sys_base_df = baseline_df[baseline_df["system_name"] == sys_name]
+
+            all_cats = sorted(set(sys_target_df["category"].unique()).union(set(sys_base_df["category"].unique())))
+            if not all_cats:
+                continue
+
+            target_cat_counts = sys_target_df.groupby("category").size() if not sys_target_df.empty else pd.Series(dtype=int)
+            base_cat_totals = sys_base_df.groupby("category").size() if not sys_base_df.empty else pd.Series(dtype=int)
+
+            cat_metrics_list = []
+            sys_anom_cats = []
+
+            for cat_name in all_cats:
+                cat_target_count = int(target_cat_counts.get(cat_name, 0))
+                cat_base_total = int(base_cat_totals.get(cat_name, 0))
+                cat_base_avg = cat_base_total / actual_baseline_weeks
+
+                cat_diff = cat_target_count - cat_base_avg
+                cat_growth_rate = ((cat_target_count - cat_base_avg) / max(cat_base_avg, 1.0)) * 100.0
+
+                is_cat_anomaly = False
+                if cat_target_count >= (cat_base_avg * cat_multiplier) and cat_diff >= cat_min_spike:
+                    is_cat_anomaly = True
+                    cat_reason = f"暴增：當週 {cat_target_count} 件 (週均 {cat_base_avg:.1f} 件, {cat_growth_rate:+.0f}%)"
+                else:
+                    cat_reason = f"正常 (當週 {cat_target_count} 件 / 週均 {cat_base_avg:.1f} 件)"
+
+                c_metric = CategoryMetrics(
+                    system_name=sys_name,
+                    category_name=cat_name,
+                    target_count=cat_target_count,
+                    baseline_avg=cat_base_avg,
+                    diff=cat_diff,
+                    growth_rate=cat_growth_rate,
+                    is_anomaly=is_cat_anomaly,
+                    reason=cat_reason
+                )
+                cat_metrics_list.append(c_metric)
+                if is_cat_anomaly:
+                    sys_anom_cats.append(c_metric)
+
+            cat_metrics_list.sort(key=lambda x: x.target_count, reverse=True)
+            sys_anom_cats.sort(key=lambda x: x.diff, reverse=True)
+            sys_anom_cats = sys_anom_cats[:top_n_cat]
+
+            system_categories[sys_name] = cat_metrics_list
+            if sys_anom_cats:
+                anomalous_categories[sys_name] = sys_anom_cats
+
+        is_anomaly = len(anomalous_systems) > 0 or len(anomalous_categories) > 0
+
+        return AnomalyDetectionResult(
             mode="weekly",
             target_period_str=target_period_str,
             baseline_period_str=baseline_period_str,
-            is_weekly=True
+            is_anomaly_detected=is_anomaly,
+            systems=system_metrics_list,
+            anomalous_systems=anomalous_systems,
+            system_categories=system_categories,
+            anomalous_categories=anomalous_categories,
+            target_cases_df=target_df
         )
+
 
     def analyze_monthly(self, df: pd.DataFrame, target_month: Optional[str] = None) -> MonthlyDetectionResult:
         """
@@ -294,23 +426,28 @@ class AnomalyDetector:
         cat_min_spike = self.monthly_cfg.get("category_min_spike", 5)
         top_n_cat = self.monthly_cfg.get("top_n_categories", 5)
 
-        # 取得所有可用月份 (排序)
-        all_months = sorted(df["month_str"].unique())
-        if target_month in all_months:
-            t_idx = all_months.index(target_month)
-            baseline_months_list = all_months[max(0, t_idx - baseline_months_count):t_idx]
-        else:
-            # 若 target_month 不在資料中，取 target_month 之前的月份
-            baseline_months_list = [m for m in all_months if m < target_month][-baseline_months_count:]
+        # 使用日曆計算連續的前 N 個月 (避免跳月/斷層資料誤算)
+        target_year, target_m = map(int, target_month.split("-"))
+        baseline_months_list = []
+        for i in range(1, baseline_months_count + 1):
+            by, bm = subtract_months(target_year, target_m, i)
+            baseline_months_list.append(f"{by:04d}-{bm:02d}")
+        baseline_months_list.sort()
 
         target_df = df[df["month_str"] == target_month]
         baseline_df = df[df["month_str"].isin(baseline_months_list)]
-        actual_baseline_months = max(1, len(baseline_months_list))
+        
+        # 計算實際有資料的基線月份數
+        actual_months_with_data = baseline_df["month_str"].nunique() if not baseline_df.empty else 0
+        actual_baseline_months = max(1, actual_months_with_data) if actual_months_with_data > 0 else baseline_months_count
 
-        if baseline_months_list:
-            baseline_period_str = f"{baseline_months_list[0]} ~ {baseline_months_list[-1]} (前 {actual_baseline_months} 個月)"
+        if actual_months_with_data == 0:
+            baseline_period_str = f"前 {baseline_months_count} 個月 (⚠️ 無歷史資料可供比對)"
+        elif actual_months_with_data < baseline_months_count:
+            actual_months_in_data = sorted(baseline_df["month_str"].unique())
+            baseline_period_str = f"{actual_months_in_data[0]} ~ {actual_months_in_data[-1]} (僅 {actual_months_with_data}/{baseline_months_count} 個月有資料)"
         else:
-            baseline_period_str = f"前 {baseline_months_count} 個月 (無完整歷史)"
+            baseline_period_str = f"{baseline_months_list[0]} ~ {baseline_months_list[-1]} (前 {actual_baseline_months} 個月)"
 
         # ==========================================
         # 第 1 層：系統級檢測 (System Level)
@@ -331,7 +468,10 @@ class AnomalyDetector:
             growth_rate = ((target_count - base_avg) / max(base_avg, 1.0)) * 100.0
 
             is_anomaly = False
-            if target_count >= (base_avg * sys_multiplier) and diff >= sys_min_spike:
+            if actual_months_with_data == 0:
+                # 無歷史基線資料時，不判定為異常暴增，僅標記資料不足
+                reason = f"⚠️ 無歷史基線資料可供比對 (本月 {target_count} 件)"
+            elif target_count >= (base_avg * sys_multiplier) and diff >= sys_min_spike:
                 is_anomaly = True
                 reason = f"本月 {target_count} 件，超過前 {actual_baseline_months} 個月月均 ({base_avg:.1f} 件) 達 {growth_rate:+.0f}% (增加 {diff:+.1f} 件)"
             elif target_count == 0 and base_avg == 0:
@@ -389,7 +529,9 @@ class AnomalyDetector:
                 cat_reason = ""
 
                 # 類別異常判定：增長倍數 >= category_multiplier 且 差額 >= category_min_spike
-                if cat_target_count >= (cat_base_avg * cat_multiplier) and cat_diff >= cat_min_spike:
+                if actual_months_with_data == 0:
+                    cat_reason = f"⚠️ 無歷史基線 (本月 {cat_target_count} 件)"
+                elif cat_target_count >= (cat_base_avg * cat_multiplier) and cat_diff >= cat_min_spike:
                     is_cat_anomaly = True
                     cat_reason = f"暴增：本月 {cat_target_count} 件 (月均 {cat_base_avg:.1f} 件, {cat_growth_rate:+.0f}%)"
                 else:

@@ -140,3 +140,84 @@ class TestMonthlyDetector:
         result = detector.analyze_monthly(pd.DataFrame())
         assert result.is_anomaly_detected is False
         assert len(result.systems) == 0
+
+    def test_monthly_category_anomaly_when_system_total_not_spiked(self, sample_config):
+        """
+        測試月報模式：系統總量未超標 (diff < 15)，但單一類別暴增 (diff >= 5 且 > 1.5倍)
+        驗證 is_anomaly_detected 應為 True，且 anomalous_categories 正確捕捉該類別
+        """
+        rows = []
+        months = [datetime(2026, 5, 15), datetime(2026, 6, 15), datetime(2026, 7, 15)]
+        
+        # 基準月：每個月 10 筆 (設備通訊 1 筆，其他類別 9 筆)
+        for m in months:
+            rows.append({
+                "case_id": f"BASE-{m.month}-COMM",
+                "created_at": m,
+                "system_name": "tcs/tap",
+                "category": "設備通訊",
+                "plant": "Fab 12A",
+                "device": "Tool-01",
+                "title": "Normal comm issue",
+                "description": "Normal description",
+                "reporter": "User1"
+            })
+            for i in range(9):
+                rows.append({
+                    "case_id": f"BASE-{m.month}-OTHER-{i}",
+                    "created_at": m + timedelta(hours=i+1),
+                    "system_name": "tcs/tap",
+                    "category": "其他維護",
+                    "plant": "Fab 12A",
+                    "device": "Tool-01",
+                    "title": "Normal issue",
+                    "description": "Normal description",
+                    "reporter": "User1"
+                })
+
+        # 目標月：2026-08
+        # 總量 12 筆 (基準月均 10 筆，diff=+2 < 15，系統總量未超標)
+        # 其中「設備通訊」8 筆 (月均 1 筆，diff=+7 >= 5 且 8 >= 1.5，類別暴增)
+        # 「其他維護」4 筆 (月均 9 筆，下降)
+        target_month = datetime(2026, 8, 15)
+        for i in range(8):
+            rows.append({
+                "case_id": f"TGT-COMM-{i}",
+                "created_at": target_month + timedelta(hours=i),
+                "system_name": "tcs/tap",
+                "category": "設備通訊",
+                "plant": "Fab 12A",
+                "device": "Tool-01",
+                "title": f"Comm error {i}",
+                "description": "SECS 通訊逾時中斷",
+                "reporter": "User1"
+            })
+        for i in range(4):
+            rows.append({
+                "case_id": f"TGT-OTHER-{i}",
+                "created_at": target_month + timedelta(hours=i+8),
+                "system_name": "tcs/tap",
+                "category": "其他維護",
+                "plant": "Fab 12A",
+                "device": "Tool-01",
+                "title": f"Other error {i}",
+                "description": "其他問題",
+                "reporter": "User1"
+            })
+
+        df = pd.DataFrame(rows)
+        df["created_at"] = pd.to_datetime(df["created_at"])
+
+        detector = AnomalyDetector(sample_config)
+        result = detector.analyze_monthly(df, target_month="2026-08")
+
+        # 驗證整體狀態為異常
+        assert result.is_anomaly_detected is True
+        # 系統級無異常 (總量未達標)
+        assert len(result.anomalous_systems) == 0
+        # 類別級有異常
+        assert "tcs/tap" in result.anomalous_categories
+        anom_cat_names = [c.category_name for c in result.anomalous_categories["tcs/tap"]]
+        assert "設備通訊" in anom_cat_names
+        assert "其他維護" not in anom_cat_names
+

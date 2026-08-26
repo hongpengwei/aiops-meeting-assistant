@@ -20,7 +20,10 @@ class EmailNotifier(BaseNotifier):
         self.smtp_port = self.cfg.get("smtp_port", 587)
         self.use_tls = self.cfg.get("use_tls", True)
         self.sender = self.cfg.get("sender", "ops-assistant@company.com")
-        self.recipients = self.cfg.get("recipients", [])
+        raw_recipients = self.cfg.get("recipients", [])
+        # 防止使用者誤將 recipients 設定為單一字串 (如 "ops@company.com")，
+        # 避免 join() 將字串拆成字元導致發信錯誤
+        self.recipients = [raw_recipients] if isinstance(raw_recipients, str) else list(raw_recipients) if raw_recipients else []
         
         user_env = self.cfg.get("username_env_var", "SMTP_USER")
         pass_env = self.cfg.get("password_env_var", "SMTP_PASSWORD")
