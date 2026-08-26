@@ -1,0 +1,116 @@
+# ==========================================
+# 系統設定檔 (Ops Insight Assistant Config)
+# ==========================================
+
+# 1. 資料來源設定 (可在此無縫切換資料來源)
+data_source:
+  type: "csv"  # 可選: "csv", "excel", "database", "api"
+  
+  # CSV / Excel 設定 (現階段 POC 模式)
+  csv:
+    file_path: "./data/mock_cases.csv"
+  
+  # 資料庫設定 (未來直接連線公司 DB 時啟用)
+  database:
+    # ⚠️ 安全性提醒：連線字串請透過環境變數設定，切勿在此填入真實密碼
+    # 設定方式: export DB_CONNECTION_STRING="mssql+pyodbc://user:password@server/dbname?driver=ODBC+Driver+17+for+SQL+Server"
+    connection_string_env_var: "DB_CONNECTION_STRING"
+    query_template: |
+      SELECT 
+        ISSUE_ID AS case_id,
+        SUBMIT_TIME AS created_at,
+        SYSTEM_NAME AS system_name,
+        CATEGORY_NAME AS category,
+        FAB_ID AS plant,
+        TOOL_ID AS device,
+        SUMMARY AS title,
+        USER_DESCRIPTION AS description,
+        REPORTER_NAME AS reporter
+      FROM CORP_INCIDENTS
+      WHERE SUBMIT_TIME >= :start_date AND SUBMIT_TIME <= :end_date
+
+  # REST API 設定 (未來串接 Jira / ServiceNow 時啟用)
+  api:
+    base_url: "https://internal-ticket.company.com/api/v1"
+    token_env_var: "CORP_API_TOKEN"
+    endpoint: "/incidents/search"
+
+# 2. 異常檢測閾值設定 (Thresholds)
+thresholds:
+  # 每日晨會設定 (Daily Morning Meeting)
+  daily:
+    baseline_days: 7       # 與前 7 天平均比對
+    multiplier: 1.4        # 超過 7 天平均的 1.4 倍視為異常 (或可依需求調整)
+    min_spike_cases: 5     # 至少增加 5 件才觸發異常 (避免基數小如 1變2 的誤報)
+  
+  # 每週課會設定 (Weekly Section Meeting - 系統級與類別級兩層檢測)
+  weekly:
+    baseline_weeks: 4         # 與過去 4 週週平均比對
+    multiplier: 1.3           # 系統級：超過 4 週平均的 1.3 倍視為異常
+    min_spike_cases: 10       # 系統級：至少增加 10 件才觸發異常
+    category_multiplier: 1.4  # 類別級：該類別超過歷史週均的 1.4 倍視為異常
+    category_min_spike: 4     # 類別級：該類別至少增加 4 件才觸發異常
+    top_n_categories: 5       # 每個系統最多呈現/分析前 N 個暴增類別
+
+  # 每月課會設定 (Monthly Section Meeting - 系統級與類別級兩層檢測)
+  monthly:
+    baseline_months: 3        # 與過去 3 個月月平均比對
+    multiplier: 1.3           # 系統級：超過 3 個月平均的 1.3 倍視為異常
+    min_spike_cases: 15       # 系統級：至少增加 15 件才觸發異常
+    category_multiplier: 1.5  # 類別級：該類別超過歷史平均的 1.5 倍視為異常
+    category_min_spike: 5     # 類別級：該類別至少增加 5 件才觸發異常
+    top_n_categories: 5       # 每個異常系統最多深度分析前 N 個暴增類別
+
+# 3. AI 分析引擎設定 (LLM Settings)
+ai:
+  # =========================================================================
+  # 模式 A: 使用 Google Gemini (官方 API)
+  # =========================================================================
+  provider: "gemini"                # 可選: "gemini", "openai_compatible", "custom_http", "mock"
+  model_name: "gemini-3.5-flash"
+  api_key_env_var: "GEMINI_API_KEY"  # 從系統環境變數讀取 (請勿在此填入真實金鑰)
+  max_cases_to_analyze: 50           # 最多抽取前 N 筆描述分析
+
+  # =========================================================================
+  # 模式 B: 使用公司自建 LLM Gateway / OpenAI / Azure / Ollama / vLLM
+  # (大多數企業內部的私有 AI 平台均採用此 OpenAI 相容標準)
+  # =========================================================================
+  # provider: "openai_compatible"
+  # base_url: "https://internal-llm-gateway.company.com/v1"  # 或 http://localhost:11434/v1
+  # model_name: "llama-3-70b-instruct"                      # 或 gpt-4o-mini, qwen2.5 等
+  # api_key_env_var: "CORP_LLM_KEY"
+  # custom_headers:
+  #   X-Client-Id: "ops-assistant"
+  #   X-Department: "Automation-IT"
+
+  # =========================================================================
+  # 模式 C: 使用公司自訂格式的 HTTP REST API
+  # =========================================================================
+  # provider: "custom_http"
+  # custom_endpoint_url: "https://ai-service.company.com/api/analyze"
+  # api_key_env_var: "CORP_API_TOKEN"
+
+# 4. 通知發送設定 (Notification Settings)
+notifications:
+  # 本地輸出 (預設開啟，隨時可產生報表檢視)
+  local:
+    enabled: true
+    output_dir: "./output"
+  
+  # Microsoft Teams 推播
+  teams:
+    enabled: false
+    webhook_url: "" # 填入 Teams 頻道 Incoming Webhook URL
+  
+  # Email 發信
+  email:
+    enabled: false
+    smtp_host: "smtp.company.com"
+    smtp_port: 587
+    use_tls: true
+    sender: "ops-assistant@company.com"
+    recipients:
+      - "team-lead@company.com"
+    # 帳密建議從環境變數讀取
+    username_env_var: "SMTP_USER"
+    password_env_var: "SMTP_PASSWORD"
