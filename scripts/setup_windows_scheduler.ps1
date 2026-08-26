@@ -7,6 +7,7 @@ $ProjectDir = (Get-Item $ScriptDir).Parent.FullName
 
 $DailyBat = Join-Path $ProjectDir "run_daily.bat"
 $WeeklyBat = Join-Path $ProjectDir "run_weekly.bat"
+$MonthlyBat = Join-Path $ProjectDir "run_monthly.bat"
 
 Write-Host "=========================================================" -ForegroundColor Cyan
 Write-Host "⚙️ 正在註冊 Windows 工作排程器 (Task Scheduler)..." -ForegroundColor Cyan
@@ -26,5 +27,10 @@ $WeeklyTrigger = New-ScheduledTaskTrigger -Weekly -DaysOfWeek Monday -At 09:00am
 $WeeklyAction = New-ScheduledTaskAction -Execute $WeeklyBat -WorkingDirectory $ProjectDir
 Register-ScheduledTask -TaskName $WeeklyTaskName -Trigger $WeeklyTrigger -Action $WeeklyAction -Description "每週課會 Case 趨勢比對與 AI 簡報" -Force | Out-Null
 Write-Host "✅ 每週課會排程註冊成功！[名稱: $WeeklyTaskName | 時間: 每週一 09:00]" -ForegroundColor Green
+
+# 3. 註冊每月課會排程 (每月 1 號 09:30)
+$MonthlyTaskName = "AIOps_Section_Meeting_Monthly"
+schtasks /Create /TN $MonthlyTaskName /TR "$MonthlyBat" /SC MONTHLY /D 1 /ST 09:30 /F | Out-Null
+Write-Host "✅ 每月課會排程註冊成功！[名稱: $MonthlyTaskName | 時間: 每月 1 號 09:30]" -ForegroundColor Green
 
 Write-Host "`n🎉 所有排程已就緒！系統將在會議開始前自動執行並推播。" -ForegroundColor Yellow

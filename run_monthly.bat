@@ -1,22 +1,22 @@
 @echo off
 chcp 65001 >nul
-title AIOps 每月課會智能監控分析
+:: 移動到專案所在目錄
+cd /d "%~dp0"
 
-echo ============================================================
-echo  AIOps 每月課會智能監控與類別歸因 (Monthly Meeting)
-echo ============================================================
-
-set "VENV_DIR=%~dp0venv"
-set "PYTHON_EXE=python"
-
-if exist "%VENV_DIR%\Scripts\python.exe" (
-    set "PYTHON_EXE=%VENV_DIR%\Scripts\python.exe"
+:: 1. 檢查虛擬環境是否存在，若不存在則自動建立並安裝依賴 (防止污染本機環境)
+if not exist ".venv\Scripts\activate.bat" (
+    echo [AIOps] 正在為您建立獨立虛擬環境 (.venv)...
+    python -m venv .venv
+    echo [AIOps] 正在安裝必要套件...
+    call .venv\Scripts\activate.bat
+    python -m pip install --upgrade pip
+    pip install -r requirements.txt
+) else (
+    call .venv\Scripts\activate.bat
 )
 
-"%PYTHON_EXE%" main.py --mode monthly %*
+:: 2. 執行分析
+echo [AIOps] 正在執行每月課會分析 (使用獨立虛擬環境)...
+python main.py --mode monthly %*
 
-if %ERRORLEVEL% neq 0 (
-    echo.
-    echo [ERROR] 每月課會任務執行失敗，請檢查上方錯誤訊息。
-    pause
-)
+echo [AIOps] 執行完成！

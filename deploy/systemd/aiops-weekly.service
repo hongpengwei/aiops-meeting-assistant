@@ -1,0 +1,13 @@
+[Unit]
+Description=AIOps Weekly Section Meeting Analysis
+After=network.target
+
+[Service]
+Type=oneshot
+WorkingDirectory=/opt/aiops-assistant
+ExecStart=/opt/aiops-assistant/run_weekly.sh
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

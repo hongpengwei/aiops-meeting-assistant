@@ -1,0 +1,9 @@
+[Unit]
+Description=AIOps Monthly Section Meeting Timer (1st of each month at 09:30)
+
+[Timer]
+OnCalendar=*-*-01 09:30:00
+Persistent=true
+
+[Install]
+WantedBy=timers.target
