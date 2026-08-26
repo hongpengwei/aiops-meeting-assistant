@@ -109,3 +109,8 @@ class TestAnomalyDetector:
         assert "設備通訊" in anom_cats
         assert "其他維護" not in anom_cats
 
+    def test_daily_with_plants_str(self, sample_config, sample_cases_df):
+        detector = AnomalyDetector(sample_config)
+        result = detector.analyze_daily(sample_cases_df, plants_str="F12A, F14B")
+        assert result.plants_str == "F12A, F14B"
+

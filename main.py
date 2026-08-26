@@ -30,7 +30,7 @@ def load_config(config_path: str = "./config/config.yaml") -> dict:
     with open(config_path, "r", encoding="utf-8") as f:
         return yaml.safe_load(f)
 
-def run_pipeline(mode: str = "daily", target_date_str: str = None, config_path: str = "./config/config.yaml"):
+def run_pipeline(mode: str = "daily", target_date_str: str = None, config_path: str = "./config/config.yaml", cli_plants: str = None):
     setup_logging()
     logger.info("=" * 60)
     logger.info("🚀 啟動 AIOps 晨會 / 課會 / 月會智能監控分析系統")
@@ -41,6 +41,21 @@ def run_pipeline(mode: str = "daily", target_date_str: str = None, config_path: 
     # 1. 載入設定
     config = load_config(config_path)
     logger.info(f"[1/5] ⚙️ 設定檔載入成功 (資料來源模式: {config.get('data_source', {}).get('type')})")
+
+    # 判斷目標廠區 (CLI 參數優先，其次為 config.yaml 中的 thresholds.<mode>.plants)
+    mode_cfg = config.get("thresholds", {}).get(mode, {})
+    if cli_plants:
+        target_plants = [p.strip() for p in cli_plants.split(",") if p.strip()]
+    else:
+        cfg_plants = mode_cfg.get("plants", [])
+        if isinstance(cfg_plants, str):
+            target_plants = [p.strip() for p in cfg_plants.split(",") if p.strip()]
+        elif isinstance(cfg_plants, list):
+            target_plants = [str(p).strip() for p in cfg_plants if str(p).strip()]
+        else:
+            target_plants = []
+
+    plants_str = ", ".join(target_plants) if target_plants else "全廠區"
 
     # 2. 根據模式計算精確的日曆完整週期邊界 (避免滑動時間誤差)
     if mode == "daily":
@@ -78,20 +93,30 @@ def run_pipeline(mode: str = "daily", target_date_str: str = None, config_path: 
         df = loader.load_cases(start_date=start_date, end_date=end_date)
         logger.info(f"[2/5] 📦 成功讀取 {len(df)} 筆 Case 歷史資料")
 
+    # 廠區過濾 (若有指定特定廠區)
+    if target_plants and not df.empty:
+        orig_count = len(df)
+        target_plants_upper = {p.upper() for p in target_plants}
+        df = df[df["plant"].astype(str).str.strip().str.upper().isin(target_plants_upper)]
+        logger.info(f"🏭 廠區篩選鎖定: 【{plants_str}】 (篩選後筆數: {len(df)} / 原始筆數: {orig_count})")
+    else:
+        logger.info(f"🏭 廠區分析範圍: 【{plants_str}】")
+
     # 3. 執行統計異常檢測
     detector = AnomalyDetector(config)
 
     if mode == "daily":
-        result = detector.analyze_daily(df, target_date=target_date)
+        result = detector.analyze_daily(df, target_date=target_date, plants_str=plants_str)
     elif mode == "weekly":
-        result = detector.analyze_weekly(df, target_week_end=target_date)
+        result = detector.analyze_weekly(df, target_week_end=target_date, plants_str=plants_str)
     else:  # monthly
-        result = detector.analyze_monthly(df, target_month=target_month_str_calc)
+        result = detector.analyze_monthly(df, target_month=target_month_str_calc, plants_str=plants_str)
 
 
     logger.info(f"[3/5] 📊 統計檢測完成！")
     logger.info(f"  - 統計期間: {result.target_period_str}")
     logger.info(f"  - 基準區間: {result.baseline_period_str}")
+    logger.info(f"  - 分析廠區: {result.plants_str}")
     logger.info(f"  - 異常狀態: {'🔴 偵測到異常數量暴增' if result.is_anomaly_detected else '🟢 全系統運作正常'}")
 
     for s in result.systems:
@@ -206,9 +231,16 @@ def main():
         default="./config/config.yaml", 
         help="設定檔路徑"
     )
+    parser.add_argument(
+        "--plant", "--plants",
+        dest="plants",
+        type=str,
+        default=None,
+        help="指定分析廠區 (如: F12A 或逗號分隔多廠區 F12A,F14B)。未指定時讀取 config.yaml 各模式設定"
+    )
 
     args = parser.parse_args()
-    run_pipeline(mode=args.mode, target_date_str=args.target_date, config_path=args.config)
+    run_pipeline(mode=args.mode, target_date_str=args.target_date, config_path=args.config, cli_plants=args.plants)
 
 if __name__ == "__main__":
     main()

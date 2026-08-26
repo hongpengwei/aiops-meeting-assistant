@@ -36,6 +36,7 @@ class AnomalyDetectionResult:
     target_period_str: str    # 目標期間標籤 (例如: "2026-08-22")
     baseline_period_str: str  # 基準期間標籤 (例如: "2026-08-15 ~ 2026-08-21 (前7天)")
     is_anomaly_detected: bool
+    plants_str: str = "全廠區" # 分析廠區 (例如: "F12A, F12B" 或 "全廠區")
     systems: List[SystemMetrics] = field(default_factory=list)
     anomalous_systems: List[SystemMetrics] = field(default_factory=list)
     system_categories: Dict[str, List[CategoryMetrics]] = field(default_factory=dict)
@@ -53,6 +54,7 @@ class MonthlyDetectionResult:
     target_period_str: str = ""
     baseline_period_str: str = ""
     is_anomaly_detected: bool = False
+    plants_str: str = "全廠區" # 分析廠區 (例如: "F12A, F12B" 或 "全廠區")
     systems: List[SystemMetrics] = field(default_factory=list)
     anomalous_systems: List[SystemMetrics] = field(default_factory=list)
     # 每個系統所有類別統計：{ "tcs/tap": [CategoryMetrics, ...] }
@@ -100,7 +102,8 @@ class AnomalyDetector:
         mode: str,
         target_period_str: str,
         baseline_period_str: str,
-        is_weekly: bool = False
+        is_weekly: bool = False,
+        plants_str: str = "全廠區"
     ) -> AnomalyDetectionResult:
         all_systems = sorted(df["system_name"].unique())
 
@@ -187,12 +190,13 @@ class AnomalyDetector:
             target_period_str=target_period_str,
             baseline_period_str=baseline_period_str,
             is_anomaly_detected=len(anomalous_systems) > 0,
+            plants_str=plants_str,
             systems=system_metrics_list,
             anomalous_systems=anomalous_systems,
             target_cases_df=target_df
         )
 
-    def analyze_daily(self, df: pd.DataFrame, target_date: Optional[datetime.date] = None) -> AnomalyDetectionResult:
+    def analyze_daily(self, df: pd.DataFrame, target_date: Optional[datetime.date] = None, plants_str: str = "全廠區") -> AnomalyDetectionResult:
         """
         每日晨會分析：昨日 (或指定日) vs 前 7 天
         """
@@ -201,7 +205,8 @@ class AnomalyDetector:
                 mode="daily",
                 target_period_str=str(target_date or "N/A"),
                 baseline_period_str="N/A",
-                is_anomaly_detected=False
+                is_anomaly_detected=False,
+                plants_str=plants_str
             )
 
         df = df.copy()
@@ -233,10 +238,11 @@ class AnomalyDetector:
             mode="daily",
             target_period_str=str(target_date),
             baseline_period_str=baseline_period_str,
-            is_weekly=False
+            is_weekly=False,
+            plants_str=plants_str
         )
 
-    def analyze_weekly(self, df: pd.DataFrame, target_week_end: Optional[datetime.date] = None) -> AnomalyDetectionResult:
+    def analyze_weekly(self, df: pd.DataFrame, target_week_end: Optional[datetime.date] = None, plants_str: str = "全廠區") -> AnomalyDetectionResult:
         """
         每週課會分析 (兩層檢測)：
         1. 第一層 (系統級)：上週 (7天) vs 過去 N 週週平均
@@ -247,7 +253,8 @@ class AnomalyDetector:
                 mode="weekly",
                 target_period_str=str(target_week_end or "N/A"),
                 baseline_period_str="N/A",
-                is_anomaly_detected=False
+                is_anomaly_detected=False,
+                plants_str=plants_str
             )
 
         df = df.copy()
@@ -384,6 +391,7 @@ class AnomalyDetector:
             target_period_str=target_period_str,
             baseline_period_str=baseline_period_str,
             is_anomaly_detected=is_anomaly,
+            plants_str=plants_str,
             systems=system_metrics_list,
             anomalous_systems=anomalous_systems,
             system_categories=system_categories,
@@ -392,7 +400,7 @@ class AnomalyDetector:
         )
 
 
-    def analyze_monthly(self, df: pd.DataFrame, target_month: Optional[str] = None) -> MonthlyDetectionResult:
+    def analyze_monthly(self, df: pd.DataFrame, target_month: Optional[str] = None, plants_str: str = "全廠區") -> MonthlyDetectionResult:
         """
         每月課會分析 (兩層檢測)：
         1. 第一層 (系統級)：本月 vs 過去 N 個月月平均
@@ -402,7 +410,8 @@ class AnomalyDetector:
             return MonthlyDetectionResult(
                 target_period_str=str(target_month or "N/A"),
                 baseline_period_str="N/A",
-                is_anomaly_detected=False
+                is_anomaly_detected=False,
+                plants_str=plants_str
             )
 
         df = df.copy()
@@ -568,6 +577,7 @@ class AnomalyDetector:
             target_period_str=f"{target_month} (當月)",
             baseline_period_str=baseline_period_str,
             is_anomaly_detected=is_anomaly,
+            plants_str=plants_str,
             systems=system_metrics_list,
             anomalous_systems=anomalous_systems,
             system_categories=system_categories,

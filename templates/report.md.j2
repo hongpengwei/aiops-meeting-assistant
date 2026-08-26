@@ -1,6 +1,7 @@
 # {{ title }}
 
 - **會議類型**：{{ meeting_name }}
+- **分析廠區**：{{ result.plants_str }}
 - **統計目標**：{{ result.target_period_str }}
 - **比較基準**：{{ result.baseline_period_str }}
 - **總體狀態**：{% if result.is_anomaly_detected %}⚠️ 偵測到異常數量暴增{% else %}✅ 所有系統數量均在基準線內，運作正常{% endif %}

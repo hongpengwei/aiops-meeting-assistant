@@ -219,6 +219,59 @@ export DB_CONNECTION_STRING="mssql+pyodbc://user:password@server/dbname?driver=O
 
 ---
 
+## 🏭 廠區/地點自訂篩選指南 (Plant / Fab Filtering)
+
+針對不同會議層級關心的廠區範圍不同（如：**每日晨會只想看所屬單一廠區**，但**每週/每月課會想看全廠區或特定幾座廠**），系統支援兩種彈性的篩選方式：
+
+### 方式 1：在 `config/config.yaml` 依會議模式各自設定（最推薦）
+
+在 `config/config.yaml` 的 `thresholds` 區塊中，直接為 `daily`、`weekly`、`monthly` 填入想監控的廠區清單：
+
+```yaml
+thresholds:
+  # ☀️ 每日晨會：只看 F12A 與 F12B
+  daily:
+    plants: ["F12A", "F12B"]
+    baseline_days: 7
+    multiplier: 1.4
+    min_spike_cases: 5
+
+  # 📅 每週課會：看全廠區 (留空 [] 代表不限廠區，全廠皆分析)
+  weekly:
+    plants: []
+    baseline_weeks: 4
+    multiplier: 1.3
+    min_spike_cases: 10
+
+  # 📊 每月課會：看主要生產大廠
+  monthly:
+    plants: ["F12A", "F14B", "F15", "F18"]
+    baseline_months: 3
+    multiplier: 1.3
+    min_spike_cases: 15
+```
+
+### 方式 2：執行指令時透過 `--plant` 參數即時指定（臨時彈性分析）
+
+若平時設定看全廠區，但臨時想單獨分析某個廠區，直接在命令列加入 `--plant` 或 `--plants` 參數即可（CLI 參數優先於設定檔）：
+
+```powershell
+# 1. 每日晨會只分析單一廠區 (例如 F12A)
+python main.py --mode daily --plant F12A
+
+# 2. 每週課會同時分析多個廠區 (逗號分隔)
+python main.py --mode weekly --plants F12A,F14B
+
+# 3. 每月課會分析指定月份 + 指定廠區
+python main.py --mode monthly --target-date 2026-07 --plant F15
+```
+
+> 💡 **自動特點**：
+> - 廠區名稱比對**不區分大小寫**且**自動去除首尾空格**（`f12a` 與 `F12A` 皆相容）。
+> - 產出的 Markdown/HTML 報表及推播標題開頭會自動註明 **「分析廠區：F12A, F14B」** 或 **「分析廠區：全廠區」**，會前一眼掌握統計範圍。
+
+---
+
 ## 🤖 AI Model 換成自己的 API 設定指南
 
 系統在 [`src/ai/analyzer.py`](file:///c:/Users/hongp/OneDrive/桌面/0823/src/ai/analyzer.py) 內建支援了 **3 種主流 API 模式**，只要修改 [`config/config.yaml`](file:///c:/Users/hongp/OneDrive/桌面/0823/config/config.yaml) 即可切換：
