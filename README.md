@@ -316,6 +316,7 @@ powershell -ExecutionPolicy Bypass -File .\scripts\setup_windows_scheduler.ps1
 > 註冊完成後，系統會自動在：
 > - **週一至週五 08:30** 自動執行每日晨會分析 (`run_daily.bat`)
 > - **每週一 09:00** 自動執行每週課會分析 (`run_weekly.bat`)
+> - **每月 1 號 09:30** 自動執行每月課會分析 (`run_monthly.bat`)
 
 #### 🛠️ 手動設定方式：
 1. 按 `Win + R` 輸入 `taskschd.msc` 開啟「工作排程器」。
@@ -330,8 +331,8 @@ powershell -ExecutionPolicy Bypass -File .\scripts\setup_windows_scheduler.ps1
 ```bash
 python scheduler.py
 ```
-* 內建精準時間比對，預設週一至週五 08:30 跑晨會、週一 09:00 跑課會。
-* 時間可在 [`scheduler.py`](file:///c:/Users/hongp/OneDrive/桌面/0823/scheduler.py) 最上方的 `DAILY_TIME` 與 `WEEKLY_TIME` 變數自由調整。
+* 內建精準時間比對，預設週一至週五 08:30 跑晨會、週一 09:00 跑課會、每月 1 號 09:30 跑月會。
+* 時間可在 [`scheduler.py`](file:///c:/Users/hongp/OneDrive/桌面/0823/scheduler.py) 最上方的變數自由調整。
 
 ---
 
@@ -342,7 +343,7 @@ python scheduler.py
 #### 方案 A：使用 Crontab (最輕量簡便)
 1. 賦予腳本執行權限：
    ```bash
-   chmod +x run_daily.sh run_weekly.sh
+   chmod +x run_daily.sh run_weekly.sh run_monthly.sh
    ```
 2. 輸入 `crontab -e` 加入定時排程：
    ```bash
@@ -351,6 +352,9 @@ python scheduler.py
 
    # 2. 每週課會：每週一 09:00 執行
    00 9 * * 1 /bin/bash /opt/aiops-assistant/run_weekly.sh >> /var/log/aiops_weekly.log 2>&1
+
+   # 3. 每月課會：每月 1 號 09:30 執行
+   30 9 1 * * /bin/bash /opt/aiops-assistant/run_monthly.sh >> /var/log/aiops_monthly.log 2>&1
    ```
 
 ---
@@ -358,21 +362,46 @@ python scheduler.py
 #### 方案 B：使用 Linux Systemd Timer (企業伺服器首選，支援日誌與狀態監控)
 1. 將 systemd 設定檔複製到系統目錄：
    ```bash
-   sudo cp deploy/systemd/aiops-daily.* /etc/systemd/system/
+   sudo cp deploy/systemd/aiops-* /etc/systemd/system/
    sudo systemctl daemon-reload
    ```
 2. 啟動定時器並設定開機自啟：
    ```bash
-   sudo systemctl enable --now aiops-daily.timer
+   sudo systemctl enable --now aiops-daily.timer aiops-weekly.timer aiops-monthly.timer
    ```
 3. 查看排程狀態與即時日誌：
    ```bash
-   # 查看下一次觸發時間
+   # 查看下一次觸發時間清單
    systemctl list-timers --all | grep aiops
    
-   # 查看執行日誌
-   journalctl -u aiops-daily.service -f
+   # 查看執行日誌 (例如查看月會執行紀錄)
+   journalctl -u aiops-monthly.service -f
    ```
+
+---
+
+## 🛠️ 排程常見調整指南 (修改時間、更改星期幾、停用排程)
+
+針對不同環境，如何調整排程設定：
+
+### 1. 如何修改開會時間？
+| 執行環境 | 如何修改 |
+| :--- | :--- |
+| **Windows 工作排程器** | 按 `Win + R` 輸入 `taskschd.msc` ➔ 連點任務（如 `AIOps_Morning_Meeting_Daily`） ➔ 點「觸發程序」頁籤 ➔ 編輯時間 ➔ 確定 |
+| **Python 守護腳本 (`scheduler.py`)** | 打開 `scheduler.py` 修改頂部常數：`DAILY_TIME = "08:00"` / `WEEKLY_TIME = "08:30"` / `MONTHLY_TIME = "09:00"` |
+| **Linux Systemd** | 編輯 `deploy/systemd/aiops-*.timer` 中的 `OnCalendar` 時間，執行 `sudo systemctl daemon-reload` |
+
+### 2. 課會不是星期一，如何改為「星期幾」？
+* **Windows 工作排程器**：在 `taskschd.msc` 編輯 `AIOps_Section_Meeting_Weekly` ➔ 觸發程序中改勾選「星期三」或「星期五」即可；或修改 `scripts/setup_windows_scheduler.ps1` 中的 `-DaysOfWeek Wednesday`。
+* **Python 守護腳本**：修改 `scheduler.py` 中的 `WEEKLY_DAY`（`0`=週一、`1`=週二、`2`=週三、`3`=週四、`4`=週五）。
+* **Linux Systemd**：修改 `aiops-weekly.timer` 中的 `OnCalendar=Wed *-*-* 09:00:00`（改為 `Tue`, `Wed`, `Thu`, `Fri`）。
+
+### 3. 如何暫時停用 / 關閉特定排程（例如不想跑每月課會）？
+* **Windows 工作排程器**：
+  - 介面：在 `taskschd.msc` 找到 `AIOps_Section_Meeting_Monthly` ➔ **按右鍵 ➔ 點「停用 (Disable)」**。
+  - 指令：`Disable-ScheduledTask -TaskName "AIOps_Section_Meeting_Monthly"`
+* **Python 守護腳本**：在 `scheduler.py` 內將 monthly 的 `if day_of_month == ...` 邏輯註解掉（加上 `#`）後重啟。
+* **Linux Systemd**：執行 `sudo systemctl stop aiops-monthly.timer && sudo systemctl disable aiops-monthly.timer`。
 
 ---
 
