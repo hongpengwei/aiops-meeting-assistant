@@ -25,6 +25,65 @@ def get_logger(name):
     """取得指定名稱的 logger"""
     return logging.getLogger(name)
 
+import os
+
+def load_dotenv_if_present(env_path: str = "./.env") -> int:
+    """
+    載入 .env 檔案中的環境變數至 os.environ。
+    優先使用 python-dotenv，若未安裝則使用內建輕量解析器作為 fallback。
+    回傳成功載入的變數數量。
+    """
+    if not os.path.exists(env_path):
+        return 0
+
+    try:
+        from dotenv import load_dotenv
+        # load_dotenv 預設不會覆蓋已存在的環境變數 (override=False)
+        load_dotenv(dotenv_path=env_path)
+    except ImportError:
+        # Fallback 簡易解析器
+        try:
+            with open(env_path, "r", encoding="utf-8") as f:
+                for line in f:
+                    line = line.strip()
+                    if not line or line.startswith("#") or "=" not in line:
+                        continue
+                    if line.startswith("export "):
+                        line = line[7:].strip()
+                    key, val = line.split("=", 1)
+                    key = key.strip()
+                    val = val.strip()
+                    # 去除引號
+                    if (val.startswith('"') and val.endswith('"')) or (val.startswith("'") and val.endswith("'")):
+                        val = val[1:-1]
+                    if key and key not in os.environ:
+                        os.environ[key] = val
+        except Exception as e:
+            logging.getLogger(__name__).warning(f"解析 .env 檔案失敗: {e}")
+
+    # 計算 .env 中定義的 key 數量
+    count = 0
+    try:
+        with open(env_path, "r", encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if line and not line.startswith("#") and "=" in line:
+                    count += 1
+    except Exception:
+        pass
+    return count
+
+def mask_secret(secret: str, visible_start: int = 4, visible_end: int = 4) -> str:
+    """
+    對敏感字串進行遮罩處理 (如: AIzaSy1234567890 -> AIza****7890)
+    """
+    if not secret:
+        return ""
+    secret = str(secret).strip()
+    if len(secret) <= (visible_start + visible_end):
+        return "*" * len(secret)
+    return f"{secret[:visible_start]}****{secret[-visible_end:]}"
+
 import calendar
 from datetime import date, datetime, timedelta
 from typing import Tuple, Optional

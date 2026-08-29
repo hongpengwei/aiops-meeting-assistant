@@ -11,14 +11,19 @@
    - ☀️ **每日晨會 (`--mode daily`)**：比較昨日 vs 前 7 天均線，快速掌握昨日突發問題。
    - 📅 **每週課會 (`--mode weekly`)**：比較上週 vs 過去 4 週週平均，掌握中短期趨勢。
    - 📊 **每月課會 (`--mode monthly`)**：**兩層深度檢測**（第 1 層：系統總量暴增檢測 ➔ 第 2 層：深入比對該系統哪些具體 Category/類別暴增），AI 只聚焦暴增類別的描述進行精準歸因！
-3. **統計快篩 + AI 深度歸因**：
+3. **📈 HTML 報告內嵌迷你趨勢走勢圖 (Sparklines)**：
+   - 表格內嵌純 Python 生成之向量 SVG 走勢圖，帶有漸層半透明區域與歷史數據懸停提示 (Hover Tooltip)。
+   - 零外部 CDN / JavaScript 相依，**100% 適用半導體隔離內網環境**。
+4. **🩺 一鍵系統連線健檢 (`--check-health`)**：
+   - 一鍵自動診斷資料庫 SQL 握手、AI 模型連線延遲 (ms)、.env 變數載入與 Teams/SMTP 推播通道。
+5. **統計快篩 + AI 深度歸因**：
    - 🟢 **數量正常**：自動推播「全系統正常，無突發異常」，不耗費任何 AI Token。
-   - 🔴 **數量暴增**：自動打包提報人的**自然語言描述與狀況回報**交由 AI 分析，判斷是「特定機台/廠區集中異常」還是「零星分散個案」，並直接整理出 3 點會議發言重點與行動方案。
-4. **無痛切換資料來源 (Data Adapter Pattern)**：
+   - 🔴 **數量暴增**：自動打包提報人的**自然語言描述與狀況回報**交由 AI 分析，判斷是「特定機台/廠區集中異常」還是「零星分散個案」。
+6. **無痛切換資料來源 (Data Adapter Pattern)**：
    - 現階段：使用手動匯出或產生的 CSV / Excel 檔案。
-   - 未來：只需在 `config.yaml` 改設定，即可直連公司 SQL 資料庫或 Jira / ServiceNow API，**核心程式碼一行都不用改**。
-5. **支援多種 AI 連線模式**：支援 Google Gemini、OpenAI、Azure、企業私有 LLM Gateway、本地 Ollama / vLLM 或自訂 HTTP 端點，並具備離線自動 Fallback 防護。
-6. **多管道推播**：支援本機 HTML/Markdown 報表、Microsoft Teams 頻道通知與 Email 發信。
+   - 未來：只需在 `config.yaml` 或 `.env` 改設定，即可直連公司 SQL 資料庫或 Jira / ServiceNow API，**核心程式碼一行都不用改**。
+7. **支援多種 AI 連線模式**：支援 Google Gemini、OpenAI、Azure、企業私有 LLM Gateway、本地 Ollama / vLLM 或自訂 HTTP 端點，並具備離線自動 Fallback 防護。
+8. **多管道推播**：支援本機 HTML/Markdown 報表、Microsoft Teams 頻道通知與 Email 發信。
 
 ---
 
@@ -28,12 +33,14 @@
 0823/
 ├── config/
 │   └── config.yaml             # 系統核心設定 (資料來源、閾值、AI 模型、推播)
+├── .env.example                # 本地環境變數設定範本 (API Keys, DB 連線字串)
 ├── data/
 │   └── mock_cases.csv          # 測試用的歷史 Case 數據 (包含真實中文狀況描述與 category)
-├── output/                     # 自動生成的 Markdown 與 HTML 視覺化簡報
+├── output/                     # 自動生成的 Markdown 與 HTML 視覺化簡報 (含 SVG 走勢圖)
 ├── src/
 │   ├── __init__.py
-│   ├── utils.py                # 共用工具模組 (logging 設定、Windows 編碼修復)
+│   ├── utils.py                # 共用工具模組 (.env 自動載入、金鑰遮罩、Windows 編碼)
+│   ├── health_checker.py       # 一鍵系統連線與環境健檢模組 (--check-health)
 │   ├── loaders/                # 資料讀取抽象層 (轉接器模式)
 │   │   ├── __init__.py
 │   │   ├── base.py             # 抽象資料介面 (BaseCaseLoader 與欄位標準化)
@@ -43,7 +50,8 @@
 │   │   └── factory.py          # Loader 工廠模式
 │   ├── analytics/
 │   │   ├── __init__.py
-│   │   └── detector.py         # 統計異常檢測引擎 (日/週/月兩層檢測)
+│   │   ├── detector.py         # 統計異常檢測引擎 (日/週/月兩層檢測 + 歷史序列計算)
+│   │   └── sparkline.py        # 純 Python SVG 迷你走勢圖生成器 (零外部相依)
 │   ├── ai/
 │   │   ├── __init__.py
 │   │   ├── analyzer.py         # AI 描述分析與語意分群 (Gemini / OpenAI / Custom API)
@@ -56,24 +64,24 @@
 │       └── email_sender.py     # Email (SMTP) 發信模組
 ├── templates/
 │   ├── report.md.j2            # 晨會/課會 Markdown 報告模板
-│   ├── report.html.j2          # 晨會/課會 HTML 報告模板
+│   ├── report.html.j2          # 晨會/課會 HTML 報告模板 (含 Sparkline 走勢圖)
 │   ├── monthly_report.md.j2    # 每月課會 Markdown 兩層分析模板
-│   └── monthly_report.html.j2  # 每月課會 HTML 兩層分析模板
+│   └── monthly_report.html.j2  # 每月課會 HTML 兩層分析模板 (含 Sparkline 走勢圖)
 ├── tests/                      # 單元測試 (pytest)
 │   ├── conftest.py             # 共用 pytest fixtures
 │   ├── test_detector.py        # 日/週異常檢測測試
 │   ├── test_monthly_detector.py # 每月兩層異常檢測測試
+│   ├── test_sparkline.py       # SVG 走勢圖測試
+│   ├── test_health_checker.py  # 系統健檢與 .env 測試
 │   ├── test_csv_loader.py      # CSV 載入與篩選測試
 │   └── test_analyzer.py        # AI 分析器測試
 ├── deploy/
 │   └── systemd/                # Linux Systemd Service 與 Timer 定時排程檔
-│       ├── aiops-daily.service
-│       └── aiops-daily.timer
 ├── scripts/
 │   ├── __init__.py
 │   ├── generate_mock_data.py   # 生成逼真測試數據的腳本 (含跨月與多類別)
 │   └── setup_windows_scheduler.ps1 # Windows 工作排程器一鍵註冊腳本
-├── main.py                     # 主程式入口 (支援 --mode daily / --mode weekly / --mode monthly)
+├── main.py                     # 主程式入口 (支援 --check-health 與各模式)
 ├── scheduler.py                # Python 定時排程守護服務 (跨平台/伺服器)
 ├── run_daily.bat / .sh         # 每日晨會啟動腳本 (Windows / Linux)
 ├── run_weekly.bat / .sh        # 每週課會啟動腳本 (Windows / Linux)
@@ -84,18 +92,44 @@
 ├── requirements-extras.txt     # 可選套件依賴 (AI / DB / Excel)
 ├── pytest.ini                  # 測試設定
 └── README.md                   # 說明文件
-```
 
 ---
 
 ## 🛡️ 獨立虛擬環境隔離機制 (Zero System Pollution)
 
-本專案採用 **完全隔離的 `.venv` 虛擬環境機制**，確保所有 Python 套件只會安裝在專案目錄內，**100% 不會影響您本機系統或其他專案的 Python 環境**！
+本專案採用 **完全隔離的虛擬環境機制**，確保所有 Python 套件只會安裝在專案目錄內，**100% 不會影響您本機系統或其他專案的 Python 環境**！
 
 ### ⚡ 自動建立與防護機制
 所有的啟動腳本（`run_daily.bat/.sh`、`run_weekly.bat/.sh`）均內建**智慧環境檢測**：
-1. **首次執行**：自動在本專案目錄下建立獨立的 `.venv/` 資料夾，並在虛擬環境內部安裝依賴套件。
-2. **後續排程執行**：自動載入 `.venv` 執行，完全不干涉系統全域環境。
+1. **首次執行**：自動在本專案目錄下建立獨立的虛擬環境資料夾，並在虛擬環境內部安裝依賴套件。
+2. **後續排程執行**：自動載入虛擬環境執行，完全不干涉系統全域環境。
+
+### 💻 如何手動進入與退出虛擬環境？
+
+若您想在終端機手動下指令（例如執行 `pytest` 或 `python main.py`），請依照您的終端機類型輸入：
+
+| 終端機環境 | 啟動（進入）指令 | 退出指令 |
+| :--- | :--- | :--- |
+| **🪟 Windows PowerShell** *(VS Code 預設)* | `.\venv\Scripts\Activate.ps1` *(或 `.\.venv\Scripts\Activate.ps1`)* | `deactivate` |
+| **🪟 Windows CMD** *(命令提示字元)* | `venv\Scripts\activate.bat` | `deactivate` |
+| **🐧 Git Bash / Linux / macOS** | `source venv/Scripts/activate` *(Linux 為 `source .venv/bin/activate`)* | `deactivate` |
+
+> 💡 **PowerShell 權限小提示**：若出現「停用指令碼執行」錯誤，請先執行 `Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass` 即可解除限制。  
+> 成功進入後，終端機命令列開頭會出現 `(venv)` 標籤！
+
+---
+
+## 📈 HTML 報告迷你趨勢走勢圖 (Sparklines)
+
+為了讓與會主管在晨會、課會或月會一眼看清各系統的歷史案件走向，系統產出的 HTML 報表內嵌了 **純向量 SVG 迷你折線圖**：
+
+* 🚀 **100% 離線可用**：純 Python 數學運算生成 SVG 標籤，不需載入 Chart.js 或任何 CDN，**完全相容無外網的隔離機房**。
+* 🎨 **動態色彩警示**：正常系統顯示沉穩科技藍色；異常暴增系統自動切換為醒目紅色。
+* 🔍 **懸停數據提示 (Hover Tooltip)**：滑鼠移至走勢圖上的任一圓點，即時浮現該日/該週/該月的確切日期與案件量（例如：`08/25: 24 件`）。
+* ⏱️ **跨度支援**：
+  - ☀️ **每日晨會**：呈現過去 7 天至當日（共 8 個時間點）的每日案件波動。
+  - 📅 **每週課會**：呈現過去 4 週至當週（共 5 週）的週總量走勢。
+  - 📊 **每月課會**：呈現過去 3~6 個月至當月的月總量走向。
 
 ---
 
@@ -133,6 +167,8 @@
 
 ---
 
+---
+
 ## ⚡ 使用者接入指南 — 只需兩步
 
 > 💡 **不需要改任何一行程式碼！** 不管是接 AI、接資料庫還是接 API，使用者只需要做兩件事：
@@ -140,32 +176,104 @@
 | 步驟 | 做什麼 | 在哪裡做 |
 |:---:|------|------|
 | **①** | 修改 `config/config.yaml` | 切換 `data_source.type` 或 `ai.provider`，填入對應設定 |
-| **②** | 設定環境變數 | 設定 API Key / DB 連線字串等敏感資訊 |
+| **②** | 設定環境變數 / `.env` | 設定 API Key / DB 連線字串等敏感資訊 |
 
-### 快速範例
+---
 
-**接 AI（Gemini）**：
+### 🧭 設定修改指南：我該改 `config.yaml` 還是 `.env`？
+
+> 🎯 **核心記憶口訣**：
+> - **「改規則與功能」** ➔ 改 `config/config.yaml`（非機密、團隊共用）
+> - **「填密碼與金鑰」** ➔ 改 `.env`（敏感機密、不進 Git）
+
+#### 📊 詳細職責對照表
+
+| 設定項目 | 改在 `config/config.yaml` | 改在 `.env` | 說明 |
+| :--- | :---: | :---: | :--- |
+| **調整異常倍數門檻** (如改 1.4 倍) | ✅ **改這裡** (`thresholds.daily.multiplier`) | ❌ | 團隊共用之統計規則 |
+| **指定分析廠區** (如只看 `["F12A"]`) | ✅ **改這裡** (`thresholds.daily.plants`) | ❌ | 各會議關注之廠區範圍 |
+| **切換資料來源** (如從 `csv` 切換至 `database`) | ✅ **改這裡** (`data_source.type`) | ❌ | 系統架構模式切換 |
+| **切換 AI 模型** (如改用 `gemini-2.5-flash`) | ✅ **改這裡** (`ai.model_name`) | ❌ | 指定 LLM 呼叫版本 |
+| **啟用/關閉 Teams 或 Email 推播** | ✅ **改這裡** (`notifications.teams.enabled`) | ❌ | 推播通道開關 |
+| **修改 Email 收件人清單** | ✅ **改這裡** (`notifications.email.recipients`) | ❌ | 開會主管名單 |
+| **Google Gemini API Key** | ❌ (僅指定變數名稱) | ✅ **改這裡** (`GEMINI_API_KEY=AIzaSy...`) | 個人/專案私密金鑰 |
+| **資料庫連線帳號密碼** | ❌ (僅指定變數名稱) | ✅ **改這裡** (`DB_CONNECTION_STRING=...`) | 機密 DB 連線字串 |
+| **公司 Jira / ServiceNow Token** | ❌ | ✅ **改這裡** (`CORP_API_TOKEN=...`) | 企業內部 API Token |
+| **Email 發信 SMTP 密碼** | ❌ | ✅ **改這裡** (`SMTP_PASSWORD=...`) | 發信用信箱授權碼 |
+
+#### 💡 3 大常見實務情境範例
+
+* **情境 1：主管希望晨會檢測門檻放寬（避免零星小波動報警）**
+  👉 打開 `config/config.yaml`，修改 `thresholds.daily.multiplier: 1.6` 與 `min_spike_cases: 8`。
+* **情境 2：更換或申請了新的 Google Gemini API Key**
+  👉 打開 `.env`，修改 `GEMINI_API_KEY=AIzaSyNewKey...`。
+* **情境 3：POC 測試完畢，正式上線直連公司 SQL 資料庫**
+  👉 **第一步**：在 `config/config.yaml` 將 `data_source.type` 改為 `"database"`。  
+  👉 **第二步**：在 `.env` 填入真實連線字串 `DB_CONNECTION_STRING="mssql+pyodbc://user:password@server/dbname..."`。
+
+---
+
+### 🔐 推薦方式：使用 `.env` 管理本地金鑰 (最方便安全)
+
+1. 複製範本檔建立 `.env`：
+   ```powershell
+   # Windows
+   copy .env.example .env
+
+   # Linux
+   cp .env.example .env
+   ```
+2. 在 `.env` 填入您的真實金鑰與連線字串（已內建在 `.gitignore`，100% 不會被 commit 洩漏）：
+   ```env
+   # AI API 金鑰
+   GEMINI_API_KEY=AIzaSy...
+   
+   # 資料庫連線字串
+   DB_CONNECTION_STRING=mssql+pyodbc://user:password@server/dbname?driver=ODBC+Driver+17+for+SQL+Server
+   ```
+
+---
+
+## 🩺 一鍵系統連線健檢 (`--check-health`)
+
+在正式啟用定時排程或開會前，可隨時執行全自動環境健檢：
+
 ```powershell
-# 步驟 1: config.yaml 已經預設好 Gemini，不需要改
-# 步驟 2: 設定環境變數
-$env:GEMINI_API_KEY = "AIzaSy..."
+python main.py --check-health
 ```
 
-**接公司資料庫**：
-```powershell
-# 步驟 1: 修改 config.yaml → data_source.type 改為 "database"，調整 SQL query
-# 步驟 2: 設定環境變數
-$env:DB_CONNECTION_STRING = "mssql+pyodbc://user:password@server/dbname?driver=ODBC+Driver+17+for+SQL+Server"
-```
+系統將自動檢測：
+1. 📂 **環境設定**：`.env` 是否存在、`config.yaml` 語法是否正確。
+2. 🗄️ **資料來源**：CSV 檔案讀取、資料庫 SQL 連線握手、API 端點可達性。
+3. 🤖 **AI 服務**：向 Gemini / OpenAI / LLM Gateway 發送極輕量 Ping 請求並量測 **回應延遲 (ms)**。
+4. 📢 **推播通道**：本地 `output/` 寫入權限、Teams Webhook 與 SMTP 郵件伺服器 Socket 連線。
 
-**接公司 API（Jira / ServiceNow）**：
-```powershell
-# 步驟 1: 修改 config.yaml → data_source.type 改為 "api"，填入 base_url 和 endpoint
-# 步驟 2: 設定環境變數
-$env:CORP_API_TOKEN = "your_api_token"
-```
+#### 📋 診斷輸出預覽範例：
+```text
+======================================================================
+🩺 AIOps Ops Insight Assistant - 系統連線與環境健檢報告
+======================================================================
 
-> ⚠️ **安全提醒**：所有密碼與 API Key 均透過環境變數讀取，**切勿直接寫在 `config.yaml` 中**。
+📂 【環境設定】
+  ✅ [PASS] .env 環境變數檔              : 已載入 ./.env (包含 5 個設定變數)
+  ✅ [PASS] 設定檔 (config.yaml)       : 成功解析 YAML 設定檔 (模式: csv)
+
+📂 【資料來源】
+  ✅ [PASS] CSV 檔案讀取                : 檔案正常存在 (./data/mock_cases.csv)，欄位完整 (11ms)
+
+📂 【AI 服務】
+  ✅ [PASS] Google Gemini (gemini-3.5-flash): API 連通成功 (Key: AIzaSy****ABCD, 回應: 'OK') (1240ms)
+
+📂 【推播通道】
+  ✅ [PASS] 本地報告目錄                  : 目錄可正常寫入: C:\...\output
+  ✅ [PASS] Teams Webhook           : 未啟用 (notifications.teams.enabled: false)
+  ✅ [PASS] SMTP 郵件伺服器              : 未啟用 (notifications.email.enabled: false)
+
+----------------------------------------------------------------------
+📊 健檢統計：6 通過 [PASS]  |  0 警告 [WARN]  |  0 失敗 [FAIL]
+👉 總結：🎉 系統狀態良好，可隨時投入生產排程！
+======================================================================
+```
 
 ---
 

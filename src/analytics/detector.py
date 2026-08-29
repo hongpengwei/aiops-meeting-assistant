@@ -18,6 +18,8 @@ class SystemMetrics:
     growth_rate: float        # 增長百分比 (e.g. +150.0%)
     is_anomaly: bool
     reason: str = ""
+    trend_history: List[int] = field(default_factory=list) # 歷史各期案件數量序列
+    trend_labels: List[str] = field(default_factory=list)  # 各期時間標籤
 
 @dataclass
 class CategoryMetrics:
@@ -29,6 +31,8 @@ class CategoryMetrics:
     growth_rate: float        # 增長百分比
     is_anomaly: bool
     reason: str = ""
+    trend_history: List[int] = field(default_factory=list) # 歷史各期案件數量序列
+    trend_labels: List[str] = field(default_factory=list)  # 各期時間標籤
 
 @dataclass
 class AnomalyDetectionResult:
@@ -139,6 +143,24 @@ class AnomalyDetector:
         else:
             daily_or_weekly_counts = pd.Series(dtype=int)
 
+        # 計算每日趨勢數據 (供 Sparkline 走勢圖)
+        if not df.empty and "date" in df.columns:
+            min_d = baseline_df["date"].min() if not baseline_df.empty else target_df["date"].min()
+            max_d = target_df["date"].max() if not target_df.empty else (baseline_df["date"].max() if not baseline_df.empty else None)
+            if min_d and max_d:
+                all_trend_dates = list(pd.date_range(start=min_d, end=max_d, freq="D").date)
+                trend_labels = [d.strftime("%m/%d") for d in all_trend_dates]
+                # 建立快速查詢表 (system_name, date) -> count
+                trend_counts_map = df.groupby(["system_name", "date"]).size().to_dict()
+            else:
+                all_trend_dates = []
+                trend_labels = []
+                trend_counts_map = {}
+        else:
+            all_trend_dates = []
+            trend_labels = []
+            trend_counts_map = {}
+
         for sys_name in all_systems:
             target_count = int(target_counts.get(sys_name, 0))
             baseline_total = int(baseline_totals.get(sys_name, 0))
@@ -171,6 +193,8 @@ class AnomalyDetector:
                 else:
                     reason = f"正常範圍 (昨日 {target_count} 件 / 平均 {base_avg:.1f} 件)"
 
+            sys_trend_history = [int(trend_counts_map.get((sys_name, d), 0)) for d in all_trend_dates] if len(all_trend_dates) > 0 else [target_count]
+
             metric = SystemMetrics(
                 system_name=sys_name,
                 target_count=target_count,
@@ -179,7 +203,9 @@ class AnomalyDetector:
                 diff=diff,
                 growth_rate=growth_rate,
                 is_anomaly=is_anomaly,
-                reason=reason
+                reason=reason,
+                trend_history=sys_trend_history,
+                trend_labels=trend_labels
             )
             system_metrics_list.append(metric)
             if is_anomaly:
@@ -285,6 +311,15 @@ class AnomalyDetector:
         baseline_period_str = f"{baseline_start_date} ~ {baseline_end_date} (前 {actual_baseline_weeks} 週)"
         target_period_str = f"{target_week_start} ~ {target_week_end} (當週)"
 
+        # 計算各週區間與標籤 (例如: [W-4, W-3, W-2, W-1, 當週])
+        week_bins = []
+        weekly_trend_labels = []
+        for w_idx in range(actual_baseline_weeks, -1, -1):
+            w_start = target_week_start - timedelta(days=w_idx * 7)
+            w_end = w_start + timedelta(days=6)
+            week_bins.append((w_start, w_end))
+            weekly_trend_labels.append("當週" if w_idx == 0 else f"W-{w_idx}")
+
         # ==========================================
         # 第 1 層：系統級檢測 (System Level)
         # ==========================================
@@ -312,6 +347,11 @@ class AnomalyDetector:
             else:
                 reason = f"正常範圍 (當週 {target_count} 件 / 週平均 {base_avg:.1f} 件)"
 
+            sys_trend_history = [
+                int(df[(df["system_name"] == sys_name) & (df["date"] >= ws) & (df["date"] <= we)].shape[0])
+                for ws, we in week_bins
+            ]
+
             metric = SystemMetrics(
                 system_name=sys_name,
                 target_count=target_count,
@@ -320,7 +360,9 @@ class AnomalyDetector:
                 diff=diff,
                 growth_rate=growth_rate,
                 is_anomaly=is_anomaly,
-                reason=reason
+                reason=reason,
+                trend_history=sys_trend_history,
+                trend_labels=weekly_trend_labels
             )
             system_metrics_list.append(metric)
             if is_anomaly:
@@ -362,6 +404,11 @@ class AnomalyDetector:
                 else:
                     cat_reason = f"正常 (當週 {cat_target_count} 件 / 週均 {cat_base_avg:.1f} 件)"
 
+                cat_trend_history = [
+                    int(df[(df["system_name"] == sys_name) & (df["category"] == cat_name) & (df["date"] >= ws) & (df["date"] <= we)].shape[0])
+                    for ws, we in week_bins
+                ]
+
                 c_metric = CategoryMetrics(
                     system_name=sys_name,
                     category_name=cat_name,
@@ -370,7 +417,9 @@ class AnomalyDetector:
                     diff=cat_diff,
                     growth_rate=cat_growth_rate,
                     is_anomaly=is_cat_anomaly,
-                    reason=cat_reason
+                    reason=cat_reason,
+                    trend_history=cat_trend_history,
+                    trend_labels=weekly_trend_labels
                 )
                 cat_metrics_list.append(c_metric)
                 if is_cat_anomaly:
@@ -458,6 +507,10 @@ class AnomalyDetector:
         else:
             baseline_period_str = f"{baseline_months_list[0]} ~ {baseline_months_list[-1]} (前 {actual_baseline_months} 個月)"
 
+        # 計算各月標籤與序列 (例如: ['05月', '06月', '07月', '08月'])
+        all_months_list = baseline_months_list + [target_month]
+        monthly_trend_labels = [f"{int(m.split('-')[1])}月" for m in all_months_list]
+
         # ==========================================
         # 第 1 層：系統級檢測 (System Level)
         # ==========================================
@@ -488,6 +541,11 @@ class AnomalyDetector:
             else:
                 reason = f"正常範圍 (本月 {target_count} 件 / 月均 {base_avg:.1f} 件)"
 
+            sys_trend_history = [
+                int(df[(df["system_name"] == sys_name) & (df["month_str"] == m)].shape[0])
+                for m in all_months_list
+            ]
+
             metric = SystemMetrics(
                 system_name=sys_name,
                 target_count=target_count,
@@ -496,7 +554,9 @@ class AnomalyDetector:
                 diff=diff,
                 growth_rate=growth_rate,
                 is_anomaly=is_anomaly,
-                reason=reason
+                reason=reason,
+                trend_history=sys_trend_history,
+                trend_labels=monthly_trend_labels
             )
             system_metrics_list.append(metric)
             if is_anomaly:
@@ -546,6 +606,11 @@ class AnomalyDetector:
                 else:
                     cat_reason = f"正常 (本月 {cat_target_count} 件 / 月均 {cat_base_avg:.1f} 件)"
 
+                cat_trend_history = [
+                    int(df[(df["system_name"] == sys_name) & (df["category"] == cat_name) & (df["month_str"] == m)].shape[0])
+                    for m in all_months_list
+                ]
+
                 c_metric = CategoryMetrics(
                     system_name=sys_name,
                     category_name=cat_name,
@@ -554,7 +619,9 @@ class AnomalyDetector:
                     diff=cat_diff,
                     growth_rate=cat_growth_rate,
                     is_anomaly=is_cat_anomaly,
-                    reason=cat_reason
+                    reason=cat_reason,
+                    trend_history=cat_trend_history,
+                    trend_labels=monthly_trend_labels
                 )
                 cat_metrics_list.append(c_metric)
                 if is_cat_anomaly:

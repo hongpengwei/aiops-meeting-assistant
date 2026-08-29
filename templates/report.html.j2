@@ -29,6 +29,7 @@
             <thead>
                 <tr>
                     <th>系統名稱</th>
+                    <th>趨勢走勢 (Trend)</th>
                     <th>目標期數量</th>
                     <th>基準平均</th>
                     <th>增長率</th>
@@ -42,6 +43,7 @@
                 {% set growth_str = ("%+.0f%%"|format(s.growth_rate)) if s.target_count > 0 or s.baseline_avg > 0 else "0%" %}
                 <tr style="background-color: {{ bg_color }}; border-bottom: 1px solid #e0e0e0;">
                     <td style="padding: 10px; font-weight: bold;">{{ s.system_name }}</td>
+                    <td style="padding: 6px 10px; text-align: center;">{{ s | sparkline }}</td>
                     <td style="padding: 10px; text-align: center;">{{ s.target_count }} 件</td>
                     <td style="padding: 10px; text-align: center;">{{ "%.1f"|format(s.baseline_avg) }} 件</td>
                     <td style="padding: 10px; text-align: center;">{{ growth_str }}</td>
@@ -60,6 +62,7 @@
                 <thead>
                     <tr>
                         <th>案件類別</th>
+                        <th>趨勢走勢 (Trend)</th>
                         <th>當期數量</th>
                         <th>基準平均</th>
                         <th>增長率</th>
@@ -71,6 +74,7 @@
                     {% set cat_bg = "#fff2f0" if c.is_anomaly else "#ffffff" %}
                     <tr style="background-color: {{ cat_bg }}; border-bottom: 1px solid #eee;">
                         <td style="padding-left: 15px;">{{ c.category_name }}</td>
+                        <td style="padding: 4px 10px; text-align: center;">{{ c | sparkline }}</td>
                         <td style="text-align: center;">{{ c.target_count }} 件</td>
                         <td style="text-align: center;">{{ "%.1f"|format(c.baseline_avg) }} 件</td>
                         <td style="text-align: center;">{{ "%+.0f%%"|format(c.growth_rate) if (c.target_count > 0 or c.baseline_avg > 0) else "0%" }}</td>

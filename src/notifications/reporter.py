@@ -10,6 +10,24 @@ from src.notifications.email_sender import EmailNotifier
 logger = logging.getLogger(__name__)
 
 
+from src.analytics.sparkline import generate_sparkline_svg
+
+def render_sparkline(metric, width=110, height=28) -> str:
+    """Jinja2 filter: 將 SystemMetrics 或 CategoryMetrics 轉換為 SVG 迷你走勢圖"""
+    if metric is None:
+        return ""
+    if hasattr(metric, "trend_history"):
+        values = metric.trend_history
+        labels = getattr(metric, "trend_labels", [])
+        is_anomaly = getattr(metric, "is_anomaly", False)
+    elif isinstance(metric, (list, tuple)):
+        values = metric
+        labels = None
+        is_anomaly = False
+    else:
+        return ""
+    return generate_sparkline_svg(values=values, labels=labels, is_anomaly=is_anomaly, width=width, height=height)
+
 class ReportRenderer:
     """
     報告渲染器：負責將檢測結果與 AI 分析轉換為 Markdown / HTML
@@ -19,6 +37,7 @@ class ReportRenderer:
     def __init__(self):
         template_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), "templates")
         self.env = Environment(loader=FileSystemLoader(template_dir))
+        self.env.filters["sparkline"] = render_sparkline
         try:
             import markdown
             self.env.filters["markdown"] = lambda text: markdown.markdown(text)

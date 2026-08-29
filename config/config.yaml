@@ -70,8 +70,8 @@ ai:
   # 模式 A: 使用 Google Gemini (官方 API)
   # =========================================================================
   provider: "gemini"                # 可選: "gemini", "openai_compatible", "custom_http", "mock"
-  model_name: "gemini-2.5-flash"
-  api_key_env_var: "GEMINI_API_KEY"  # 從系統環境變數讀取 (請勿在此填入真實金鑰)
+  model_name: "gemini-3.5-flash"
+  api_key_env_var: "GEMINI_API_KEY"  # 從系統環境變數或 .env 讀取 (請勿在此填入真實金鑰)
   max_cases_to_analyze: 50           # 最多抽取前 N 筆描述分析
 
   # =========================================================================

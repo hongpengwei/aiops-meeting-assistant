@@ -10,6 +10,7 @@ import logging
 from src.utils import (
     setup_logging,
     fix_windows_encoding,
+    load_dotenv_if_present,
     get_yesterday_range,
     get_weekly_range,
     get_last_full_month_range
@@ -23,6 +24,7 @@ from src.loaders.factory import create_data_loader
 from src.analytics.detector import AnomalyDetector
 from src.ai.analyzer import AIAnalyzer
 from src.notifications.reporter import ReportGenerator
+from src.health_checker import HealthChecker
 
 def load_config(config_path: str = "./config/config.yaml") -> dict:
     if not os.path.exists(config_path):
@@ -212,6 +214,9 @@ def run_pipeline(mode: str = "daily", target_date_str: str = None, config_path: 
     logger.info("=" * 60)
 
 def main():
+    # 啟動時自動載入 .env 檔案
+    load_dotenv_if_present()
+
     parser = argparse.ArgumentParser(description="AIOps 晨會 / 課會 / 月會智能監控與歸因助手")
     parser.add_argument(
         "--mode", 
@@ -238,8 +243,20 @@ def main():
         default=None,
         help="指定分析廠區 (如: F12A 或逗號分隔多廠區 F12A,F14B)。未指定時讀取 config.yaml 各模式設定"
     )
+    parser.add_argument(
+        "--check-health",
+        action="store_true",
+        help="執行一鍵系統連線與環境健檢 (測試資料來源、AI 模型、推播通道)"
+    )
 
     args = parser.parse_args()
+
+    if args.check_health:
+        checker = HealthChecker(config_path=args.config)
+        is_healthy = checker.run_all()
+        checker.print_summary()
+        sys.exit(0 if is_healthy else 1)
+
     run_pipeline(mode=args.mode, target_date_str=args.target_date, config_path=args.config, cli_plants=args.plants)
 
 if __name__ == "__main__":
